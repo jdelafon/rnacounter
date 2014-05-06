@@ -92,6 +92,7 @@ def cobble(exons):
             active_exons.append(a[2])
         elif a[1]==0:
             active_exons.remove(a[2])
+        if len(active_exons)==0: continue
         if a[0]==b[0]: continue
         e = _inter(active_exons)
         e.start = a[0]; e.end = b[0];
@@ -128,18 +129,22 @@ def rnacount(bamname, annotname):
             if not row:
                 break
         lastchrom = chrom
-        chrexons.sort(key=lambda x: (x[0][1],x[0][2]))  # sort w.r.t. start,end,strand
+        chrexons.sort(key=lambda x: (x[0][1],x[0][2]))  # sort w.r.t. start,end
         print ">> Chromosome", chrom
 
         lastend = sys.maxint
+        lastgeneid = ''
         chunkexons = []
         for info,attrs in chrexons:
             start = info[1]
             end = info[2]
+            gene_id = attrs['gene_id']
             # Store all overlapping intervals from a disjoint chunk
-            if start <= lastend:
+            if (start <= lastend) or (gene_id == lastgeneid):
+            #if (start <= lastend):
                 chunkexons.append((info,attrs))
                 lastend = end
+                lastgeneid = gene_id
                 continue
             # Process the chunk of exons
             else:
@@ -157,6 +162,7 @@ def rnacount(bamname, annotname):
                                       transcripts=chunktrans, chrom=info[0], start=info[1], end=info[2],
                                       name=exon_id, score=info[4], strand=info[5]))
                     exonnr += 1
+
                 chunkexons = []
                 lastend = sys.maxint
 
@@ -174,22 +180,33 @@ def rnacount(bamname, annotname):
                 for t,e in t2e.iteritems():            # map {(exons ids combination): [transcripts]}
                     es = tuple(sorted(e))              # combination of exon indices
                     e2t.setdefault(es,[]).append(t)
-                # Replace too similar transcript by the first of the list, arbitrarily
-                transcripts = set()  # Full list of remaining transcripts
+                # replace too similar transcripts by the first of the list, arbitrarily
+                transcripts = set()  # full list of remaining transcripts
                 tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
                 for p in pieces:
                     filtered = set([tx_replace.get(t,t) for t in p.transcripts])
                     transcripts |= filtered
                     p.transcripts = list(filtered)
                 transcripts = list(transcripts)
+                # remake the transcript-exon mapping
+                t2e = {}
+                for p in pieces:
+                    for tx in p.transcripts:
+                        t2e.setdefault(tx,[]).append(p.name)
 
                 # Build the matrix :: lines are exons, columns are transcripts,
                 # so that A[i,j]=1 means "transcript j contains exon i".
                 Avals = asarray([[int(t in e.transcripts) for t in transcripts] for e in pieces])
-                if len(Avals)>0:
-                    print Avals
 
-                #break    # 1 feat pre chromosome
+                if exons[0].gene_name == "Gapdh":
+                    print t2e
+                    print exons
+                    print transcripts
+                    print Avals
+                #if len(Avals)>0:
+                #    print Avals
+
+                #break    # 1 feat per chromosome
         #break    # 1 chromosome
 
     annot.close()
