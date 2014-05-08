@@ -2,10 +2,12 @@ import pysam
 import os, sys
 import itertools
 from numpy import asarray
+import copy
 
+Ecounter = itertools.count(1)
 
 def parse_gtf(row):
-    #fields = ['chr','source','name','start','end','score','strand','frame','attributes']
+    # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
     def _score(x):
         if str(x) == '.': return 0
         else: return float(x)
@@ -16,14 +18,20 @@ def parse_gtf(row):
     row = row.strip().split("\t")
     if len(row) < 9:
         raise ValueError("\"Attributes\" field required in GFF.")
-    info = (row[0], int(row[3])-1, int(row[4]), row[2], _score(row[5]),_strand(row[6])) # bed fields
+    if row[2] != 'exon':
+        return False
     attrs = (x.strip().split() for x in row[8].split(';'))  # {gene_id: "AAA", ...}
     attrs = dict((x[0],x[1].strip("\"")) for x in attrs)
-    return info,attrs
+    exon_id = attrs.get('exon_id', 'E%d'%Ecounter.next())
+    return Exon(id=exon_id, gene_id=attrs['gene_id'], gene_name=attrs['gene_name'],
+                chrom=row[0], start=int(row[3])-1, end=int(row[4]),
+                name=exon_id, score=_score(row[5]), strand=_strand(row[6]),
+                transcripts=[attrs['transcript_id']])
+
 
 class GenomicObject(object):
     def __init__(self, id='',gene_id='',gene_name='',chrom='',start=0,end=0,
-                 name='',score=0.0,strand=0,length=0,seq=''):
+                 name='',score=0.0,strand=0,length=0,seq='',multiplicity=1):
         self.id = id
         self.gene_id = gene_id
         self.gene_name = gene_name
@@ -34,7 +42,8 @@ class GenomicObject(object):
         self.score = score
         self.strand = strand
         self.length = length
-        self.seq = seq  # sequence
+        #self.seq = seq  # sequence
+        self.multiplicity = multiplicity
     def __and__(self,other):
         """The intersection of two GenomicObjects"""
         assert self.chrom==other.chrom, "Cannot add features from different chromosomes"
@@ -47,10 +56,12 @@ class GenomicObject(object):
             chrom = self.chrom,
             start = max(self.start, other.start),
             end = min(self.end, other.end),
-            name = '|'.join(set([self.name, other.name])),
+            ##   name = '|'.join(set([self.name, other.name])),
+            name = '|'.join([self.name, other.name]),
             #score = self.score + other.score,
             strand = (self.strand + other.strand)/2,
             #length = min(self.end, other.end) - max(self.start, other.start),
+            multiplicity = self.multiplicity + other.multiplicity
         )
     def __repr__(self):
         return "<%s (%d-%d) %s>" % (self.name,self.start,self.end,self.gene_name)
@@ -65,22 +76,15 @@ class Exon(GenomicObject):
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
 
-#class Gene(GenomicObject):
-#    def __init__(self, exons=set(),transcripts=set(), **args):
-#        GenomicObject.__init__(self, **args)
-#        self.exons = exons               # list of exons contained
-#        self.transcripts = transcripts   # list of transcripts contained
-
-#class Transcript(GenomicObject):
-#    def __init__(self, exons=[], **args):
-#        GenomicObject.__init__(self, **args)
-#        self.exons = exons               # list of exons it contains
-
-def _inter(feats):
-    """The intersection of a list of GenomicObjects"""
-    return reduce(lambda x,y: x&y, feats)
+def intersect_exons_list(feats):
+    """The intersection of a list *feats* of GenomicObjects"""
+    if len(feats) == 1:
+        return copy.deepcopy(feats[0])
+    else:
+        return reduce(lambda x,y: x&y, feats)
 
 def cobble(exons):
+    """Split exons into non-overlapping parts."""
     ends = [(e.start,1,e) for e in exons] + [(e.end,0,e) for e in exons]
     ends.sort()
     active_exons = []
@@ -92,122 +96,90 @@ def cobble(exons):
             active_exons.append(a[2])
         elif a[1]==0:
             active_exons.remove(a[2])
-        if len(active_exons)==0: continue
-        if a[0]==b[0]: continue
-        e = _inter(active_exons)
+        if len(active_exons)==0:
+            continue
+        if a[0]==b[0]:
+            continue
+        e = intersect_exons_list(active_exons)
         e.start = a[0]; e.end = b[0];
         cobbled.append(e)
     return cobbled
 
 
+# Gapdh id: ENSMUSG00000057666
+# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
+#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
+
 ######################################################################
+
+def process_chunk(ckexons):
+    #print ckexons
+
+    # Recuperate the transcript structure
+    te_map = {}
+    for exon in ckexons:
+        t = exon.transcripts[0]
+        te_map.setdefault(t,[]).append(exon)
+    transcripts = te_map.keys()
+
+    # Cobble all these intervals
+    pieces = cobble(ckexons)
+
+    tp_map = {}  # map {transcript: [pieces of exons]}
+    for p in pieces:
+        txs = p.transcripts
+        for tx in txs:
+            tp_map.setdefault(tx,[]).append(p)
+
+    particular = [(p,p.multiplicity) for p in pieces if p.multiplicity==1]
+
+    if exon.gene_name == "Gapdh":
+        for p in particular: print p,"^"
+
+    return 1
 
 
 def rnacount(bamname, annotname):
+    """Annotation in GTF format, assumed to be sorted at least w.r.t. chrom name."""
     sam = pysam.Samfile(bamname, "rb")
     annot = open(annotname, "r")
 
     row = annot.readline().strip()
-    info,attrs = parse_gtf(row)
-    chrom = info[0]
-    start = int(info[1])-1
+    exon0 = parse_gtf(row)
+    chrom = exon0.chrom
     lastchrom = chrom
-    exonnr = 1
 
     while row:
 
         # Load all GTF exons of a chromosome in memory and sort
         chrexons = []
         while chrom == lastchrom:  # start <= lastend and
-            info,attrs = parse_gtf(row)
-            chrom = info[0]
-            start = info[1]
-            end = info[2]
-            if (info[3] == "exon") and (end-start > 1):
-                chrexons.append((info,attrs))
+            exon = parse_gtf(row)
+            if exon.end - exon.start > 1 :
+                chrexons.append(exon)
             row = annot.readline().strip()
             if not row:
                 break
         lastchrom = chrom
-        chrexons.sort(key=lambda x: (x[0][1],x[0][2]))  # sort w.r.t. start,end
+        chrexons.sort(key=lambda x: (x.start,x.end))
         print ">> Chromosome", chrom
 
-        lastend = sys.maxint
+        # Process chunks of overlapping exons / exons of the same gene
+        lastend = chrexons[0].end
         lastgeneid = ''
-        chunkexons = []
-        for info,attrs in chrexons:
-            start = info[1]
-            end = info[2]
-            gene_id = attrs['gene_id']
-            # Store all overlapping intervals from a disjoint chunk
-            if (start <= lastend) or (gene_id == lastgeneid):
-            #if (start <= lastend):
-                chunkexons.append((info,attrs))
-                lastend = end
-                lastgeneid = gene_id
-                continue
-            # Process the chunk of exons
+        ckexons = []
+        for exon in chrexons:
+            # Store
+            if (exon.start <= lastend) or (exon.gene_id == lastgeneid):
+                ckexons.append(exon)
+            # Process the stored chunk of exons
             else:
-                exons = []
-                # Regroup info about the same exon into a single Exon instance
-                for key,group in itertools.groupby(chunkexons, lambda x:x[0][1:3]):
-                    # Group w.r.t. (start,end)
-                    chunktrans = set()
-                    for info,attrs in group:
-                        chunktrans.add(attrs['transcript_id'])
-                    # keep the last "attrs" that is common to all
-                    # - unless an exon with the exact same coords is in two genes on diff strands...
-                    exon_id = attrs.get('exon_id', 'E%d'%exonnr)
-                    exons.append(Exon(id=exonnr, gene_id=attrs['gene_id'], gene_name=attrs['gene_name'],
-                                      transcripts=chunktrans, chrom=info[0], start=info[1], end=info[2],
-                                      name=exon_id, score=info[4], strand=info[5]))
-                    exonnr += 1
+                process_chunk(ckexons)
+                ckexons = [exon]
 
-                chunkexons = []
-                lastend = sys.maxint
-
-                # Cobble all these intervals
-                pieces = cobble(exons)
-
-                # Deduce the transcripts structure and filter too similar transcripts,
-                # i.e. made of the same exons up to 200bp.
-                t2e = {}                               # map {transcript: [exons ids]}
-                for p in pieces:
-                    if p.length < 200: continue        # filter out cobbled pieces of less that 200bp
-                    for tx in p.transcripts:
-                        t2e.setdefault(tx,[]).append(p.id)
-                e2t = {}
-                for t,e in t2e.iteritems():            # map {(exons ids combination): [transcripts]}
-                    es = tuple(sorted(e))              # combination of exon indices
-                    e2t.setdefault(es,[]).append(t)
-                # replace too similar transcripts by the first of the list, arbitrarily
-                transcripts = set()  # full list of remaining transcripts
-                tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
-                for p in pieces:
-                    filtered = set([tx_replace.get(t,t) for t in p.transcripts])
-                    transcripts |= filtered
-                    p.transcripts = list(filtered)
-                transcripts = list(transcripts)
-                # remake the transcript-exon mapping
-                t2e = {}
-                for p in pieces:
-                    for tx in p.transcripts:
-                        t2e.setdefault(tx,[]).append(p.name)
-
-                # Build the matrix :: lines are exons, columns are transcripts,
-                # so that A[i,j]=1 means "transcript j contains exon i".
-                Avals = asarray([[int(t in e.transcripts) for t in transcripts] for e in pieces])
-
-                if exons[0].gene_name == "Gapdh":
-                    print t2e
-                    print exons
-                    print transcripts
-                    print Avals
-                #if len(Avals)>0:
-                #    print Avals
-
-                #break    # 1 feat per chromosome
-        #break    # 1 chromosome
+            lastend = max(exon.end,lastend)
+            lastgeneid = exon.gene_id
+        process_chunk(ckexons)
 
     annot.close()
     sam.close
@@ -216,8 +188,84 @@ def rnacount(bamname, annotname):
 ######################################################################
 
 bamname = "testfiles/test_input_EV_chr1p_flash_htsstation.bam"
-annotname = "testfiles/mm9.gtf"
+annotname = "testfiles/mm9_mini.gtf"
 
 rnacount(bamname,annotname)
 
+
+
+
+
+
+
+
+
+                #if attrs['gene_name']=='Gapdh':
+                #    print "--------------------"
+                #print "processed up to", lastend, ":"
+                #for k,v in ckexons:
+                #    print v['exon_id'], v['transcript_id']
+                #if attrs['gene_name']=='Gapdh':
+                #    print "--------------------"
+
+
+
+
+
+
+
+#class Gene(GenomicObject):
+#    def __init__(self, exons=set(),transcripts=set(), **args):
+#        GenomicObject.__init__(self, **args)
+#        self.exons = exons               # list of exons contained
+#        self.transcripts = transcripts   # list of transcripts contained
+
+#class Transcript(GenomicObject):
+#    def __init__(self, exons=[], **args):
+#        GenomicObject.__init__(self, **args)
+#        self.exons = exons               # list of exons it contains
+
+
+
+    #if 0 and 'ENSMUST00000147954' in te_map:
+    #    print '-------ENSMUST00000147954'
+    #    for x in te_map['ENSMUST00000147954']: print x
+    #    print;
+    #    for x in tp_map['ENSMUST00000147954']: print x
+    #    print '-------ENSMUST00000117757'
+    #    for x in te_map['ENSMUST00000117757']: print x
+    #    print
+    #    for x in tp_map['ENSMUST00000117757']: print x
+    #    print '-------ENSMUST00000118875'
+    #    for x in te_map['ENSMUST00000118875']: print x
+    #    print
+    #    for x in tp_map['ENSMUST00000118875']: print x
+    #    print '-------ENSMUST00000073605'
+    #    for x in te_map['ENSMUST00000073605']: print x
+    #    print
+    #    for x in tp_map['ENSMUST00000073605']: print x
+    #    print '-------ENSMUST00000144205'
+    #    for x in te_map['ENSMUST00000144205']: print x
+    #    print
+    #    for x in tp_map['ENSMUST00000144205']: print x
+    #    print '-------ENSMUST00000144588'
+    #    for x in te_map['ENSMUST00000144588']: print x
+    #    print
+    #    for x in tp_map['ENSMUST00000144588']: print x
+    #    print '-------'
+
+
+    #if exon.gene_name == "Gapdh":
+    #    for e in ckexons: print e
+
+    #testexons = [e for e in ckexons if e.name[-4:] in ['5781','9315']]
+    #for e in testexons: print e
+    #print '------------'
+    #testpieces = cobble(testexons)
+    #for p in testpieces: print p
+
+
+
+    #if exon.gene_name == "Gapdh":
+    #    for p in pieces: print p
 
