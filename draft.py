@@ -3,6 +3,8 @@ import os, sys
 import itertools
 from numpy import asarray
 import copy
+import math
+
 
 Ecounter = itertools.count(1)
 
@@ -66,6 +68,7 @@ class GenomicObject(object):
     def __repr__(self):
         return "<%s (%d-%d) %s>" % (self.name,self.start,self.end,self.gene_name)
 
+
 class Exon(GenomicObject):
     def __init__(self, transcripts=set(), **args):
         GenomicObject.__init__(self, **args)
@@ -76,12 +79,14 @@ class Exon(GenomicObject):
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
 
+
 def intersect_exons_list(feats):
     """The intersection of a list *feats* of GenomicObjects"""
     if len(feats) == 1:
         return copy.deepcopy(feats[0])
     else:
         return reduce(lambda x,y: x&y, feats)
+
 
 def cobble(exons):
     """Split exons into non-overlapping parts."""
@@ -106,14 +111,64 @@ def cobble(exons):
     return cobbled
 
 
+def isnum(s):
+    """Return True if string *s* represents a number, False otherwise"""
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+class Counter(object):
+    def __init__(self, stranded=False):
+        self.n = 0 # read count
+        self.n_raw = 0 # read count, no NH flag
+        self.n_ws = 0 # read count, wrong strand
+        self.strand = 0 # exon strand
+        if stranded:
+            self.count_fct = self.count_stranded
+        else:
+            self.count_fct = self.count
+
+    def __call__(self, alignment):
+        self.count_fct(alignment)
+
+    def count(self, alignment):
+        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
+        self.n += NH[0]
+        self.n_raw += 1
+
+    def count_stranded(self, alignment):
+        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
+        if self.strand == 1 and alignment.is_reverse == False \
+        or self.strand == -1 and alignment.is_reverse == True:
+            self.n += NH[0]
+        else:
+            self.n_ws += NH[0]
+
+
 # Gapdh id: ENSMUSG00000057666
 # Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
 #                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
 
+
 ######################################################################
 
-def process_chunk(ckexons):
-    #print ckexons
+def process_chunk(ckexons, sam, chrom, lastend):
+    """Distribute counts across transcripts and genes of a chunk *ckexons*
+    of non-overlapping exons."""
+
+    #if ckexons[0].gene_name != "Gapdh": return 1
+
+    # Convert chromosome name
+    if chrom[:3] == "NC_" : pass
+    elif isnum(chrom): chrom = "chr"+chrom
+
+    # Get all reads from this chunk
+    allcounter = Counter()
+    sam.fetch(chrom, ckexons[0].start, lastend, callback=allcounter)
+    print "Total: (raw) %d - (NH) %d" % (allcounter.n_raw, allcounter.n)
 
     # Recuperate the transcript structure
     te_map = {}
@@ -125,18 +180,57 @@ def process_chunk(ckexons):
     # Cobble all these intervals
     pieces = cobble(ckexons)
 
+    # Count reads in each piece - normalize etc.
     tp_map = {}  # map {transcript: [pieces of exons]}
+    pcounter = Counter()
     for p in pieces:
+        p.length = p.end - p.start
+        sam.fetch(chrom, p.start,p.end, callback=pcounter)
+        p.score = 1000 * pcounter.n_raw / float(p.length)
+        pcounter.n_raw = 0
         txs = p.transcripts
         for tx in txs:
             tp_map.setdefault(tx,[]).append(p)
 
-    particular = [(p,p.multiplicity) for p in pieces if p.multiplicity==1]
+    def estimate_tscore(unique_pieces):
+        """Calculate an estimate of the mean abundance of the transcript
+        based only on the scores of the parts *unique_pieces* that are specific
+        to this transcript."""
+        if len(unique_pieces)==0: return (0.0,0.0)
+        scores = [p.score for p in unique_pieces]
+        tmean = sum(scores) / len(scores)
+        tstdev = math.sqrt(sum((s-tmean)*(s-tmean) for s in scores) / len(scores))
+        return (tmean,tstdev)
 
-    if exon.gene_name == "Gapdh":
-        for p in particular: print p,"^"
-
-    return 1
+    # The recursive counting algorithm
+    multiplicity = 1
+    tscores = {}
+    transcripts_remain = set(t for t in transcripts)
+    while len(transcripts_remain)>1:
+        for piece in pieces:
+            if piece.multiplicity == multiplicity:
+                trans = list(piece.transcripts)[0]
+                transpieces = [p for p in tp_map[trans]]
+                unique = [p for p in transpieces if p.multiplicity==multiplicity]
+                tscores[trans] = estimate_tscore(unique)
+                # Give the same amount to every other piece of the same transcript
+                # and remove it, so that the remaining score on pieces is their total
+                # minus the this transcript's score.
+                for tp in transpieces:
+                    tp.score = min(0, tp.score - piece.score)
+                    tp.multiplicity -= 1
+                    tp.transcripts.remove(trans)
+                transcripts_remain.remove(trans)
+                #continue
+            #multiplicity -= 1
+            print "tm: ", transcripts_remain
+        pieces = [p for p in pieces if p.multiplicity != 0] # remove
+        # If no more unique pieces, get unique couples a.s.o.,
+        # and split into groups of transcripts.
+        multiplicity += 1   # ...
+    if transcripts_remain:
+        tscores[transcripts_remain.pop()] = estimate_tscore(pieces)
+    print tscores
 
 
 def rnacount(bamname, annotname):
@@ -174,12 +268,11 @@ def rnacount(bamname, annotname):
                 ckexons.append(exon)
             # Process the stored chunk of exons
             else:
-                process_chunk(ckexons)
+                process_chunk(ckexons, sam, chrom, lastend)
                 ckexons = [exon]
-
             lastend = max(exon.end,lastend)
             lastgeneid = exon.gene_id
-        process_chunk(ckexons)
+        process_chunk(ckexons, sam, chrom, lastend)
 
     annot.close()
     sam.close
@@ -187,7 +280,7 @@ def rnacount(bamname, annotname):
 
 ######################################################################
 
-bamname = "testfiles/test_input_EV_chr1p_flash_htsstation.bam"
+bamname = "testfiles/gapdhKO.bam"
 annotname = "testfiles/mm9_mini.gtf"
 
 rnacount(bamname,annotname)
