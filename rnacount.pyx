@@ -1,8 +1,14 @@
+# distutils: language = c++
+# distutils: sources = rnacounter.cc
+
 import pysam
 import os, sys
 import itertools
 from numpy import asarray
 import copy
+
+#cdef extern from "rnacounter.h":
+#    ctypedef struct exon
 
 Ecounter = itertools.count(1)
 

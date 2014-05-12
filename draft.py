@@ -1,3 +1,4 @@
+
 import pysam
 import os, sys
 import itertools
@@ -56,8 +57,8 @@ class GenomicObject(object):
             gene_id = '|'.join(set([self.gene_id, other.gene_id])),
             gene_name = '|'.join(set([self.gene_name, other.gene_name])),
             chrom = self.chrom,
-            start = max(self.start, other.start),
-            end = min(self.end, other.end),
+            #start = max(self.start, other.start),
+            #end = min(self.end, other.end),
             ##   name = '|'.join(set([self.name, other.name])),
             name = '|'.join([self.name, other.name]),
             #score = self.score + other.score,
@@ -67,7 +68,6 @@ class GenomicObject(object):
         )
     def __repr__(self):
         return "<%s (%d-%d) %s>" % (self.name,self.start,self.end,self.gene_name)
-
 
 class Exon(GenomicObject):
     def __init__(self, transcripts=set(), **args):
@@ -79,17 +79,27 @@ class Exon(GenomicObject):
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
 
+class Transcript(GenomicObject):
+    def __init__(self, exons=[], **args):
+        GenomicObject.__init__(self, **args)
+        self.exons = exons               # list of exons it contains
 
-def intersect_exons_list(feats):
-    """The intersection of a list *feats* of GenomicObjects"""
+
+def intersect_exons_list(feats, multiple=False):
+    """The intersection of a list *feats* of GenomicObjects.
+    If *multiple* is True, permits multiplicity: if the same exon E1 is
+    given twice, there will be "E1|E1" parts. Otherwise pieces are unique."""
+    if multiple is False:
+        feats = list(set(feats))
     if len(feats) == 1:
         return copy.deepcopy(feats[0])
     else:
         return reduce(lambda x,y: x&y, feats)
 
 
-def cobble(exons):
-    """Split exons into non-overlapping parts."""
+def cobble(exons, multiple=False):
+    """Split exons into non-overlapping parts.
+    :param multiple: see intersect_exons_list()."""
     ends = [(e.start,1,e) for e in exons] + [(e.end,0,e) for e in exons]
     ends.sort()
     active_exons = []
@@ -118,7 +128,6 @@ def isnum(s):
         return True
     except ValueError:
         return False
-
 
 class Counter(object):
     def __init__(self, stranded=False):
@@ -159,28 +168,79 @@ def process_chunk(ckexons, sam, chrom, lastend):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
 
-    #if ckexons[0].gene_name != "Gapdh": return 1
+    if ckexons[0].gene_name != "Gapdh": return 1
 
-    # Convert chromosome name
+
+    #--- Regroup occurrences of the same Exon from a different transcript
+    exons = []
+    for key,group in itertools.groupby(ckexons, lambda x:x.id):
+        # ckexons are sorted because chrexons were sorted by chrom,start,end
+        exon0 = group.next()
+        for g in group:
+            exon0.transcripts.append(g.transcripts[0])
+        exons.append(exon0)
+    del ckexons
+
+
+    #--- Convert chromosome name
     if chrom[:3] == "NC_" : pass
     elif isnum(chrom): chrom = "chr"+chrom
 
-    # Get all reads from this chunk
+
+    #--- Get all reads from this chunk
     allcounter = Counter()
-    sam.fetch(chrom, ckexons[0].start, lastend, callback=allcounter)
+    sam.fetch(chrom, exons[0].start, lastend, callback=allcounter)
     print "Total: (raw) %d - (NH) %d" % (allcounter.n_raw, allcounter.n)
 
-    # Recuperate the transcript structure
-    te_map = {}
-    for exon in ckexons:
-        t = exon.transcripts[0]
-        te_map.setdefault(t,[]).append(exon)
-    transcripts = te_map.keys()
 
-    # Cobble all these intervals
-    pieces = cobble(ckexons)
+    #--- Cobble all these intervals
+    pieces = cobble(exons)
 
-    # Count reads in each piece - normalize etc.
+
+    #--- Filter out too similar transcripts,
+    # e.g. made of the same exons up to 100bp.
+    t2e = {}                               # map {transcript: [pieces IDs]}
+    for p in pieces:
+        if p.length < 100: continue        # filter out cobbled pieces of less that read length
+        for t in p.transcripts:
+            t2e.setdefault(t,[]).append(p.id)
+    e2t = {}
+    for t,e in t2e.iteritems():
+        es = tuple(sorted(e))              # combination of pieces indices
+        e2t.setdefault(es,[]).append(t)    # {(pieces IDs combination): [transcripts with same struct]}
+    # Replace too similar transcripts by the first of the list, arbitrarily
+    transcripts = set()  # full list of remaining transcripts
+    tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
+    for p in pieces:
+        filtered = set([tx_replace.get(t,t) for t in p.transcripts])
+        transcripts |= filtered
+        p.transcripts = list(filtered)
+    transcripts = list(transcripts)
+
+
+    #--- Remake the transcript-pieces mapping
+    tp_map = {}
+    for p in pieces:
+        for tx in p.transcripts:
+            tp_map.setdefault(tx,[]).append(p.name)
+    #--- Remake the transcripts-exons mapping
+    te_map = {}  # map {transcript: [exons]}
+    for exon in exons:
+        txs = exon.transcripts
+        for t in txs:
+            te_map.setdefault(t,[]).append(exon)
+    #transcripts = te_map.keys()
+    print transcripts
+
+
+    #--- Build the structure matrix : lines are exons, columns are transcripts,
+    # so that A[i,j]!=0 means "transcript Tj contains exon Ei".
+    # A[i,j] is 1/(number of exons of Tj).
+    #Avals = asarray([[float(t in p.transcripts) for t in transcripts] for p in pieces])
+    Avals = asarray([[float(t in p.transcripts)/len(tp_map[t]) for t in transcripts] for p in pieces])
+
+
+    #--- Count reads in each piece - normalize etc.
     tp_map = {}  # map {transcript: [pieces of exons]}
     pcounter = Counter()
     for p in pieces:
@@ -189,48 +249,12 @@ def process_chunk(ckexons, sam, chrom, lastend):
         p.score = 1000 * pcounter.n_raw / float(p.length)
         pcounter.n_raw = 0
         txs = p.transcripts
-        for tx in txs:
-            tp_map.setdefault(tx,[]).append(p)
+        for t in txs:
+            tp_map.setdefault(t,[]).append(p)
 
-    def estimate_tscore(unique_pieces):
-        """Calculate an estimate of the mean abundance of the transcript
-        based only on the scores of the parts *unique_pieces* that are specific
-        to this transcript."""
-        if len(unique_pieces)==0: return (0.0,0.0)
-        scores = [p.score for p in unique_pieces]
-        tmean = sum(scores) / len(scores)
-        tstdev = math.sqrt(sum((s-tmean)*(s-tmean) for s in scores) / len(scores))
-        return (tmean,tstdev)
 
-    # The recursive counting algorithm
-    multiplicity = 1
-    tscores = {}
-    transcripts_remain = set(t for t in transcripts)
-    while len(transcripts_remain)>1:
-        for piece in pieces:
-            if piece.multiplicity == multiplicity:
-                trans = list(piece.transcripts)[0]
-                transpieces = [p for p in tp_map[trans]]
-                unique = [p for p in transpieces if p.multiplicity==multiplicity]
-                tscores[trans] = estimate_tscore(unique)
-                # Give the same amount to every other piece of the same transcript
-                # and remove it, so that the remaining score on pieces is their total
-                # minus the this transcript's score.
-                for tp in transpieces:
-                    tp.score = min(0, tp.score - piece.score)
-                    tp.multiplicity -= 1
-                    tp.transcripts.remove(trans)
-                transcripts_remain.remove(trans)
-                #continue
-            #multiplicity -= 1
-            print "tm: ", transcripts_remain
-        pieces = [p for p in pieces if p.multiplicity != 0] # remove
-        # If no more unique pieces, get unique couples a.s.o.,
-        # and split into groups of transcripts.
-        multiplicity += 1   # ...
-    if transcripts_remain:
-        tscores[transcripts_remain.pop()] = estimate_tscore(pieces)
-    print tscores
+    print Avals
+
 
 
 def rnacount(bamname, annotname):
@@ -277,13 +301,13 @@ def rnacount(bamname, annotname):
     annot.close()
     sam.close
 
-
 ######################################################################
 
 bamname = "testfiles/gapdhKO.bam"
 annotname = "testfiles/mm9_mini.gtf"
 
 rnacount(bamname,annotname)
+
 
 
 
@@ -312,11 +336,6 @@ rnacount(bamname,annotname)
 #        GenomicObject.__init__(self, **args)
 #        self.exons = exons               # list of exons contained
 #        self.transcripts = transcripts   # list of transcripts contained
-
-#class Transcript(GenomicObject):
-#    def __init__(self, exons=[], **args):
-#        GenomicObject.__init__(self, **args)
-#        self.exons = exons               # list of exons it contains
 
 
 
