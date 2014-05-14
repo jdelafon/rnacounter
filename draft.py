@@ -2,13 +2,12 @@
 import pysam
 import os, sys
 import itertools
-from numpy import array,asarray, zeros
+from numpy import asarray, zeros
 import numpy
 import copy
-import math
 
 
-Ecounter = itertools.count(1)
+Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 
 def parse_gtf(row):
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
@@ -31,6 +30,7 @@ def parse_gtf(row):
                 chrom=row[0], start=int(row[3])-1, end=int(row[4]),
                 name=exon_id, score=_score(row[5]), strand=_strand(row[6]),
                 transcripts=[attrs['transcript_id']])
+
 
 def lsqnonneg(C, d, x0=None, tol=None, itmax_factor=3):
     """Linear least squares with nonnegativity constraints (NNLS), based on MATLAB's lsqnonneg function.
@@ -220,14 +220,6 @@ def cobble(exons, multiple=False):
     return cobbled
 
 
-def isnum(s):
-    """Return True if string *s* represents a number, False otherwise"""
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
 class Counter(object):
     def __init__(self, stranded=False):
         self.n = 0 # read count
@@ -267,15 +259,18 @@ def process_chunk(ckexons, sam, chrom, lastend):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
 
-    def RPK(count,length):
+    def toRPK(count,length):
         return 1000.0 * count / length
+    def fromRPK(rpk,length):
+        return length * rpk / 1000.
 
     if ckexons[0].gene_name != "Gapdh": return 1
 
 
     #--- Convert chromosome name
     if chrom[:3] == "NC_" : pass
-    elif isnum(chrom): chrom = "chr"+chrom
+    try: int(chrom); chrom = "chr"+chrom
+    except: pass
 
 
     #--- Regroup occurrences of the same Exon from a different transcript
@@ -287,10 +282,6 @@ def process_chunk(ckexons, sam, chrom, lastend):
             exon0.transcripts.append(g.transcripts[0])
         exons.append(exon0)
     del ckexons
-
-
-    #--- Get all reads from this chunk
-    ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
 
     #--- Cobble all these intervals
@@ -309,13 +300,15 @@ def process_chunk(ckexons, sam, chrom, lastend):
         es = tuple(sorted(e))              # combination of pieces indices
         e2t.setdefault(es,[]).append(t)    # {(pieces IDs combination): [transcripts with same struct]}
     # Replace too similar transcripts by the first of the list, arbitrarily
-    transcripts = set()  # full list of remaining transcripts
+    transcript_ids = set()  # full list of remaining transcripts
     tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
     for p in pieces:
         filtered = set([tx_replace.get(t,t) for t in p.transcripts])
-        transcripts |= filtered
+        transcript_ids |= filtered
         p.transcripts = list(filtered)
-    transcripts = list(transcripts)
+    transcript_ids = list(transcript_ids)
+    gene_ids = list(set(e.gene_id for e in exons))
+    del t2e, e2t
 
 
     #--- Remake the transcript-pieces mapping
@@ -329,11 +322,10 @@ def process_chunk(ckexons, sam, chrom, lastend):
         txs = exon.transcripts
         for t in txs:
             te_map.setdefault(t,[]).append(exon)
-    #transcripts = te_map.keys()
 
 
-    #t = Transcript(name=g.transcripts[0],
-    #               chrom=exon0.chrom,gene_id=exon0.gene_id, gene_name=exon0.gene_name)
+    #--- Get all reads from this chunk - iterator
+    ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
 
     #--- Count reads in each piece
@@ -351,57 +343,48 @@ def process_chunk(ckexons, sam, chrom, lastend):
                 try: read = ckreads.next()
                 except StopIteration: return
                 pos = read.pos
+
     count_reads(pieces,ckreads)
-    for p in pieces: print p.count, p.name
-    print "Total, manual count",sum(p.count for p in pieces)
     #--- Calculate RPK
     for p in pieces:
-        p.rpk = p.count / p.length
+        p.rpk = toRPK(p.count,p.length)
 
 
-    #--- Get read counts (sum disjoint pieces' scores)
-    gene_counts = {}
-    gene_rpk = {}
-    for p in pieces:
-        if p.gene_id in gene_counts:
-            gene_counts[p.gene_id] += p.count
-            gene_rpk[p.gene_id] += RPK(p.count,p.length)
-        else:
-            gene_counts[p.gene_id] = p.count
-            gene_rpk[p.gene_id] = RPK(p.count,p.length)
-    print "Gene counts",gene_counts
+    def estimate_expression(feat_class, pieces, ids):
+        #--- Build the exons-transcripts structure matrix:
+        # Lines are exons, columns are transcripts,
+        # so that A[i,j]!=0 means "transcript Tj contains exon Ei".
+        if feat_class == Gene:
+            is_in = lambda p,g: g in p.gene_id.split('|')
+        elif feat_class == Transcript:
+            is_in = lambda p,t: t in p.transcripts
+        n = len(pieces)
+        m = len(ids)
+        A = zeros((n,m))
+        for i,p in enumerate(pieces):
+            for j,f in enumerate(ids):
+                A[i,j] = 1 if is_in(p,f) else 0
+        #--- Build the exons scores vector
+        E = asarray([p.rpk for p in pieces])
+        #--- Solve for RPK
+        T = lsqnonneg(A,E)
+        #--- Store result in *feat_class* objects
+        feats = []
+        for i,f in enumerate(ids):
+            exs = sorted([p for p in pieces if is_in(p,f)], key=lambda x:(x.start,x.end))
+            flen = sum(p.length for p in pieces if is_in(p,f))
+            feats.append(Transcript(name=f, start=exs[0].start, end=exs[-1].end,
+                    length=flen, rpk=T[0][i], count=fromRPK(T[0][i],flen),
+                    chrom=exs[0].chrom, gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
+        return feats
 
+    genes = estimate_expression(Gene, pieces, gene_ids)
+    transcripts = estimate_expression(Transcript, pieces, transcript_ids)
 
-    #--- Build the structure matrix: lines are exons, columns are transcripts,
-    # so that A[i,j]!=0 means "transcript Tj contains exon Ei".
-    n = len(pieces)
-    m = len(transcripts)
-    A = zeros((n,m))
-    for i,p in enumerate(pieces):
-        for j,t in enumerate(transcripts):
-            tlen = sum(e.length for e in te_map[t])  # transcript length = sum of its exons'
-            A[i,j] = RPK(1,tlen) if t in p.transcripts else 0
-    #--- Build the exons scores vector
-    E = asarray([p.count for p in pieces])
-    #--- Solve for transcripts RPK
-    T = lsqnonneg(A,E)
-    #print "A",A
-    #print "E",E
-    #print "T",T
-    for i,t in enumerate(transcripts):
-        print t,T[0][i]
-    transcript_rpk = dict((t,T[0][i]) for i,t in enumerate(transcripts))
+    for t in transcripts: print t,t.count,t.rpk
+    for g in genes: print g,g.count,g.rpk
 
-# Unique pieces of transcript 588
-    pcounter = Counter()
-    sam.fetch(chrom, 125114614,125114870, callback=pcounter)
-    print 1000*pcounter.n_raw/(125114870-125114614)
-    pcounter.n_raw = 0.0
-    sam.fetch(chrom, 125114934,125115329, callback=pcounter)
-    print 1000*pcounter.n_raw/(125115329-125114934)
-    pcounter.n_raw = 0.0
-    print
-
+    return genes,transcripts
 
 
 def rnacount(bamname, annotname):
@@ -461,5 +444,16 @@ rnacount(bamname,annotname)
 
 
 
+
+
+## Unique pieces of transcript 588
+#    pcounter = Counter()
+#    sam.fetch(chrom, 125114614,125114870, callback=pcounter)
+#    print 1000*pcounter.n_raw/(125114870-125114614)
+#    pcounter.n_raw = 0.0
+#    sam.fetch(chrom, 125114934,125115329, callback=pcounter)
+#    print 1000*pcounter.n_raw/(125115329-125114934)
+#    pcounter.n_raw = 0.0
+#    print
 
 
