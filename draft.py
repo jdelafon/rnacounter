@@ -125,7 +125,7 @@ def lsqnonneg(C, d, x0=None, tol=None, itmax_factor=3):
 
 class GenomicObject(object):
     def __init__(self, id='',gene_id='',gene_name='',chrom='',start=0,end=0,
-                 name='',score=0.0,count=0,rpk=0.0,strand=0,length=0,seq='',multiplicity=1):
+                 name='',score=0.0,count=0,count_rev=0,rpk=0.0,strand=0,length=0,seq='',multiplicity=1):
         self.id = id
         self.gene_id = gene_id
         self.gene_name = gene_name
@@ -135,6 +135,7 @@ class GenomicObject(object):
         self.name = name
         #self.score = score
         self.count = count
+        self.count_rev = count_rev
         self.rpk = rpk
         self.strand = strand
         self.length = length
@@ -171,6 +172,27 @@ class Exon(GenomicObject):
         E = GenomicObject.__and__(self,other)
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
+    def increment(self, x, read_rev=False, stranded=False):
+        if stranded:
+            # read/exon stand mismatch
+            if read_rev and self.strand == -1:
+                self.count_rev += x
+            else:
+                self.count += x
+        else:
+            self.count += x
+
+"""
+inline void exon_list::increment( double x, size_type index, bool read_rev ) {
+    if (stranded) {
+// ----------- read/exon strand mismatch:
+    if (read_rev ^ (*this)[index].revstrand)
+        counts_antisense[index] += x;
+    else
+        counts_sense[index] += x;
+    } else counts_both[index] += x;
+  }
+"""
 
 class Transcript(GenomicObject):
     def __init__(self, exons=[], **args):
@@ -264,7 +286,7 @@ def process_chunk(ckexons, sam, chrom, lastend):
     def fromRPK(rpk,length):
         return length * rpk / 1000.
 
-    if ckexons[0].gene_name != "Gapdh": return 1
+    #if ckexons[0].gene_name != "Gapdh": return 1
 
 
     #--- Convert chromosome name
@@ -308,7 +330,6 @@ def process_chunk(ckexons, sam, chrom, lastend):
         p.transcripts = list(filtered)
     transcript_ids = list(transcript_ids)
     gene_ids = list(set(e.gene_id for e in exons))
-    del t2e, e2t
 
 
     #--- Remake the transcript-pieces mapping
@@ -328,26 +349,71 @@ def process_chunk(ckexons, sam, chrom, lastend):
     ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
 
-    #--- Count reads in each piece
-    def count_reads(pieces,ckreads):
-        #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
-        try: read = ckreads.next()
-        except StopIteration: return
-        pos = read.pos
-        rlen = read.rlen
-        for p in pieces:
-            if p.start + rlen < pos:
-                continue
-            while pos < p.end + rlen:
-                p.count += 1.
-                try: read = ckreads.next()
-                except StopIteration: return
-                pos = read.pos
+    if 0:
+        #--- Count reads in each piece
+        def count_reads(pieces,ckreads):
+            #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
+            try: read = ckreads.next()
+            except StopIteration: return
+            pos = read.pos
+            rlen = read.rlen
+            for p in pieces:
+                if p.start + rlen < pos:
+                    continue
+                while pos < p.end + rlen:
+                    p.count += 1.
+                    try: read = ckreads.next()
+                    except StopIteration: return
+                    pos = read.pos
+    else:
+        #--- Count reads in each piece -- from rnacounter.cc
+        #def mapreads(alignment, exons, stranded=False):
+        def count_reads(exons,ckreads,stranded=False):
+            current_pos = 0   # exon_list.current_pos -- must be a pointer
+            for alignment in ckreads:
+                if current_pos > len(exons): return 0
+                exon_end = exons[current_pos].end
+                ali_pos = alignment.pos
+                while exon_end <= ali_pos:
+                    current_pos += 1
+                    if current_pos > len(exons): return 0
+                    else: exon_end = exons[current_pos].end
+                pos2 = current_pos
+                exon_start = exons[pos2].start
+                read_len = alignment.rlen
+                ali_len = 0
+                for op,shift in alignment.cigar:
+                    #op = alignment.cigar[j][0]     # &BAM_CIGAR_MASK ?
+                    #shift = alignment.cigar[j][1]  # >>BAM_CIGAR_SHIFT ?
+                    if op in [0,2,3]:  # [BAM_CMATCH,BAM_CDEL,BAM_CREF_SKIP]
+                        if ali_pos < exon_start:
+                            ali_pos = min(exon_start, ali_pos+shift)
+                            shift = max(0, shift-exon_start+ali_pos)
+                        while ali_pos+shift >= exon_end:
+                            if op == 0: ali_len += exon_end - ali_pos
+                            exons[pos2].increment(float(ali_len)/float(read_len), alignment.is_reverse, stranded)
+                            ali_pos = exon_end
+                            ali_len = 0
+                            shift -= exon_end-ali_pos
+                            pos2 += 1
+                            if pos2 >= len(exons): return 0
+                            exon_start = exons[pos2].start
+                            exon_end = exons[pos2].end
+                            if ali_pos < exon_start:
+                                ali_pos = min(exon_start, ali_pos+shift)
+                                shift = max(0, shift-exon_start+ali_pos)
+                        ali_pos += shift
+                        if op == 1: ali_len += shift
+                    if op == 1:
+                        ali_len += shift;
+                if ali_len < 1: return 0;
+                exons[pos2].increment(float(ali_len)/float(read_len), alignment.is_reverse, stranded)
+                return 0;
 
-    count_reads(pieces,ckreads)
-    #--- Calculate RPK
-    for p in pieces:
-        p.rpk = toRPK(p.count,p.length)
+        count_reads(pieces,ckreads)
+        #--- Calculate RPK
+        for p in pieces:
+            p.rpk = toRPK(p.count,p.length)
 
 
     def estimate_expression(feat_class, pieces, ids):
@@ -387,7 +453,7 @@ def process_chunk(ckexons, sam, chrom, lastend):
     return genes,transcripts
 
 
-def rnacount(bamname, annotname):
+def rnacount_main(bamname, annotname):
     """Annotation in GTF format, assumed to be sorted at least w.r.t. chrom name."""
     sam = pysam.Samfile(bamname, "rb")
     annot = open(annotname, "r")
@@ -436,24 +502,7 @@ def rnacount(bamname, annotname):
 bamname = "testfiles/gapdhKO.bam"
 annotname = "testfiles/mm9_mini.gtf"
 
-rnacount(bamname,annotname)
+rnacount_main(bamname,annotname)
 
-
-
-
-
-
-
-
-
-## Unique pieces of transcript 588
-#    pcounter = Counter()
-#    sam.fetch(chrom, 125114614,125114870, callback=pcounter)
-#    print 1000*pcounter.n_raw/(125114870-125114614)
-#    pcounter.n_raw = 0.0
-#    sam.fetch(chrom, 125114934,125115329, callback=pcounter)
-#    print 1000*pcounter.n_raw/(125115329-125114934)
-#    pcounter.n_raw = 0.0
-#    print
 
 

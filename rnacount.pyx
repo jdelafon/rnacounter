@@ -1,16 +1,13 @@
-# distutils: language = c++
-# distutils: sources = rnacounter.cc
 
 import pysam
 import os, sys
 import itertools
-from numpy import asarray
+from numpy import asarray, zeros
+import numpy
 import copy
 
-#cdef extern from "rnacounter.h":
-#    ctypedef struct exon
 
-Ecounter = itertools.count(1)
+Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 
 def parse_gtf(row):
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
@@ -35,9 +32,100 @@ def parse_gtf(row):
                 transcripts=[attrs['transcript_id']])
 
 
+def lsqnonneg(C, d, x0=None, tol=None, itmax_factor=3):
+    """Linear least squares with nonnegativity constraints (NNLS), based on MATLAB's lsqnonneg function.
+
+    ``(x,resnorm,res) = lsqnonneg(C,d)`` returns
+
+    * the vector *x* that minimizes norm(d-Cx) subject to x >= 0
+    * the norm of residuals *resnorm* = norm(d-Cx)^2
+    * the residuals *res* = d-Cx
+
+    :param x0: Initial point for x.
+    :param tol: Tolerance to determine what is considered as close enough to zero.
+    :param itmax_factor: Maximum number of iterations.
+
+    :type C: nxm numpy array
+    :type d: nx1 numpy array
+    :type x0: mx1 numpy array
+    :type tol: float
+    :type itmax_factor: int
+    :rtype: *x*: numpy array, *resnorm*: float, *res*: numpy array
+
+    Reference: C.L. Lawson and R.J. Hanson, Solving Least-Squares Problems, Prentice-Hall, Chapter 23, p. 161, 1974.
+    `<http://diffusion-mri.googlecode.com/svn/trunk/Python/lsqnonneg.py>`_
+    """
+    def norm1(x):
+        return abs(x).sum().max()
+
+    def msize(x, dim):
+        s = x.shape
+        if dim >= len(s): return 1
+        else: return s[dim]
+
+    def positive(x):
+        """Set to zero all negative components of an array."""
+        for i in range(len(x)):
+            if x[i] < 0 : x[i] = 0
+        return x
+
+    eps = sys.float_info.epsilon
+    if tol is None: tol = 10*eps*norm1(C)*(max(C.shape)+1)
+    C = asarray(C)
+    (m,n) = C.shape
+    P = numpy.zeros(n)                       # set P of indices where ultimately x_j > 0 & w_j = 0
+    Z = ZZ = numpy.arange(1, n+1)            # set Z of indices where ultimately x_j = 0 & w_j <= 0
+    if x0 is None or any(x0 < 0): x = P
+    else: x = x0
+    resid = d - numpy.dot(C, x)
+    w = numpy.dot(C.T, resid)                # n-vector C'(d-Cx), "dual" of x, gradient of (1/2)*||d-Cx||^2
+    outeriter = it = 0
+    itmax = itmax_factor*n
+    # Outer loop "A" to hold positive coefficients
+    while numpy.any(Z) and numpy.any(w[ZZ-1] > tol): # if Z is empty or w_j<0 for all j, terminate.
+        outeriter += 1
+        t = w[ZZ-1].argmax()                 # find index t s.t. w_t = max(w), w_t in Z. So w_t > 0.
+        t = ZZ[t]
+        P[t-1]=t                             # move the index t from set Z to set P
+        Z[t-1]=0                             # Z becomes [0] if n=1
+        PP = numpy.where(P != 0)[0]+1        # non-zero elements of P for indexing, +1 (-1 later)
+        ZZ = numpy.where(Z != 0)[0]+1        # non-zero elements of Z for indexing, +1 (-1 later)
+        CP = numpy.zeros(C.shape)
+        CP[:, PP-1] = C[:, PP-1]             # CP[:,j] is C[:,j] if j in P, or 0 if j in Z
+        CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
+        z=numpy.dot(numpy.linalg.pinv(CP), d)                 # n-vector solution of least-squares min||d-CPx||
+        if isinstance(ZZ,numpy.ndarray) and len(ZZ) == 0:     # if Z = [0], ZZ = [] and makes it fail
+            return (positive(z), sum(resid*resid), resid)
+        else:
+            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0))) # define z_j := 0 for j in Z
+        # Inner loop "B" to remove negative elements from z if necessary
+        while numpy.any(z[PP-1] <= tol): # if z_j>0 for all j, set x=z and return to outer loop
+            it += 1
+            if it > itmax:
+                max_error = z[PP-1].max()
+                raise Exception('Exiting: Iteration count (=%d) exceeded\n \
+                      Try raising the tolerance tol. (max_error=%d)' % (it, max_error))
+            QQ = numpy.where((z <= tol) & (P != 0))[0]        # indices j in P s.t. z_j < 0
+            alpha = min(x[QQ]/(x[QQ] - z[QQ]))                # step chosen as large as possible s.t. x remains >= 0
+            x = x + alpha*(z-x)                               # move x by this step
+            ij = numpy.where((abs(x) < tol) & (P <> 0))[0]+1  # indices j in P for which x_j = 0
+            Z[ij-1] = ij                                      # Add to Z, remove from P
+            P[ij-1] = numpy.zeros(max(ij.shape))
+            PP = numpy.where(P != 0)[0]+1
+            ZZ = numpy.where(Z != 0)[0]+1
+            CP[:, PP-1] = C[:, PP-1]
+            CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
+            z=numpy.dot(numpy.linalg.pinv(CP), d)
+            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0)))
+        x = z
+        resid = d - numpy.dot(C, x)
+        w = numpy.dot(C.T, resid)
+    return (x, sum(resid*resid), resid)
+
+
 class GenomicObject(object):
     def __init__(self, id='',gene_id='',gene_name='',chrom='',start=0,end=0,
-                 name='',score=0.0,strand=0,length=0,seq='',multiplicity=1):
+                 name='',score=0.0,count=0,rpk=0.0,strand=0,length=0,seq='',multiplicity=1):
         self.id = id
         self.gene_id = gene_id
         self.gene_name = gene_name
@@ -45,7 +133,9 @@ class GenomicObject(object):
         self.start = start
         self.end = end
         self.name = name
-        self.score = score
+        #self.score = score
+        self.count = count
+        self.rpk = rpk
         self.strand = strand
         self.length = length
         #self.seq = seq  # sequence
@@ -60,8 +150,8 @@ class GenomicObject(object):
             gene_id = '|'.join(set([self.gene_id, other.gene_id])),
             gene_name = '|'.join(set([self.gene_name, other.gene_name])),
             chrom = self.chrom,
-            start = max(self.start, other.start),
-            end = min(self.end, other.end),
+            #start = max(self.start, other.start),
+            #end = min(self.end, other.end),
             ##   name = '|'.join(set([self.name, other.name])),
             name = '|'.join([self.name, other.name]),
             #score = self.score + other.score,
@@ -82,15 +172,33 @@ class Exon(GenomicObject):
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
 
-def intersect_exons_list(feats):
-    """The intersection of a list *feats* of GenomicObjects"""
+class Transcript(GenomicObject):
+    def __init__(self, exons=[], **args):
+        GenomicObject.__init__(self, **args)
+        self.exons = exons               # list of exons it contains
+
+class Gene(GenomicObject):
+    def __init__(self, exons=set(),transcripts=set(), **args):
+        GenomicObject.__init__(self, **args)
+        self.exons = exons               # list of exons contained
+        self.transcripts = transcripts   # list of transcripts contained
+
+
+def intersect_exons_list(feats, multiple=False):
+    """The intersection of a list *feats* of GenomicObjects.
+    If *multiple* is True, permits multiplicity: if the same exon E1 is
+    given twice, there will be "E1|E1" parts. Otherwise pieces are unique."""
+    if multiple is False:
+        feats = list(set(feats))
     if len(feats) == 1:
         return copy.deepcopy(feats[0])
     else:
         return reduce(lambda x,y: x&y, feats)
 
-def cobble(exons):
-    """Split exons into non-overlapping parts."""
+
+def cobble(exons, multiple=False):
+    """Split exons into non-overlapping parts.
+    :param multiple: see intersect_exons_list()."""
     ends = [(e.start,1,e) for e in exons] + [(e.end,0,e) for e in exons]
     ends.sort()
     active_exons = []
@@ -107,26 +215,15 @@ def cobble(exons):
         if a[0]==b[0]:
             continue
         e = intersect_exons_list(active_exons)
-        e.start = a[0]; e.end = b[0];
+        e.start = a[0]; e.end = b[0]; e.length = b[0]-a[0]
         cobbled.append(e)
     return cobbled
 
 
-# Gapdh id: ENSMUSG00000057666
-# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
-#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
-
-def isnum(s):
-    """Return True if string *s* represents a number, False otherwise"""
-    try:
-        float(s)
-        return True
-    except ValueError:
-        return False
-
 class Counter(object):
     def __init__(self, stranded=False):
         self.n = 0 # read count
+        self.n_raw = 0 # read count, no NH flag
         self.n_ws = 0 # read count, wrong strand
         self.strand = 0 # exon strand
         if stranded:
@@ -140,6 +237,7 @@ class Counter(object):
     def count(self, alignment):
         NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
         self.n += NH[0]
+        self.n_raw += 1
 
     def count_stranded(self, alignment):
         NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
@@ -149,43 +247,143 @@ class Counter(object):
         else:
             self.n_ws += NH[0]
 
+
+# Gapdh id: ENSMUSG00000057666
+# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
+#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
+
+
 ######################################################################
 
 def process_chunk(ckexons, sam, chrom, lastend):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
-    # Convert chromosome name
+
+    def toRPK(count,length):
+        return 1000.0 * count / length
+    def fromRPK(rpk,length):
+        return length * rpk / 1000.
+
+    #if ckexons[0].gene_name != "Gapdh": return 1
+
+
+    #--- Convert chromosome name
     if chrom[:3] == "NC_" : pass
-    elif isnum(chrom): chrom = "chr"+chrom
+    try: int(chrom); chrom = "chr"+chrom
+    except: pass
 
-    # Get all reads from this chunk
-    allreads = sam.fetch(chrom, ckexons[0].start, lastend, callback=None)
-    for read in allreads: print read.pos
 
-    # Recuperate the transcript structure
-    te_map = {}
-    for exon in ckexons:
-        t = exon.transcripts[0]
-        te_map.setdefault(t,[]).append(exon)
-    transcripts = te_map.keys()
+    #--- Regroup occurrences of the same Exon from a different transcript
+    exons = []
+    for key,group in itertools.groupby(ckexons, lambda x:x.id):
+        # ckexons are sorted because chrexons were sorted by chrom,start,end
+        exon0 = group.next()
+        for g in group:
+            exon0.transcripts.append(g.transcripts[0])
+        exons.append(exon0)
+    del ckexons
 
-    # Cobble all these intervals
-    pieces = cobble(ckexons)
 
-    tp_map = {}  # map {transcript: [pieces of exons]}
+    #--- Cobble all these intervals
+    pieces = cobble(exons)
+
+
+    #--- Filter out too similar transcripts,
+    # e.g. made of the same exons up to 100bp.
+    t2e = {}                               # map {transcript: [pieces IDs]}
     for p in pieces:
-        txs = p.transcripts
-        for tx in txs:
+        if p.length < 100: continue        # filter out cobbled pieces of less that read length
+        for t in p.transcripts:
+            t2e.setdefault(t,[]).append(p.id)
+    e2t = {}
+    for t,e in t2e.iteritems():
+        es = tuple(sorted(e))              # combination of pieces indices
+        e2t.setdefault(es,[]).append(t)    # {(pieces IDs combination): [transcripts with same struct]}
+    # Replace too similar transcripts by the first of the list, arbitrarily
+    transcript_ids = set()  # full list of remaining transcripts
+    tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
+    for p in pieces:
+        filtered = set([tx_replace.get(t,t) for t in p.transcripts])
+        transcript_ids |= filtered
+        p.transcripts = list(filtered)
+    transcript_ids = list(transcript_ids)
+    gene_ids = list(set(e.gene_id for e in exons))
+
+
+    #--- Remake the transcript-pieces mapping
+    tp_map = {}
+    for p in pieces:
+        for tx in p.transcripts:
             tp_map.setdefault(tx,[]).append(p)
+    #--- Remake the transcripts-exons mapping
+    te_map = {}  # map {transcript: [exons]}
+    for exon in exons:
+        txs = exon.transcripts
+        for t in txs:
+            te_map.setdefault(t,[]).append(exon)
 
-    # Get unique pieces - belonging to a single transcript
-    particular = [(p,p.multiplicity) for p in pieces if p.multiplicity==1]
-    for part in particular:
-        pass
-        #sam.fetch()
 
-    if exon.gene_name == "Gapdh":
-        for p in particular: print p,"^"
+    #--- Get all reads from this chunk - iterator
+    ckreads = sam.fetch(chrom, exons[0].start, lastend)
+
+
+    #--- Count reads in each piece
+    def count_reads(pieces,ckreads):
+        #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
+        try: read = ckreads.next()
+        except StopIteration: return
+        pos = read.pos
+        rlen = read.rlen
+        for p in pieces:
+            if p.start + rlen < pos:
+                continue
+            while pos < p.end + rlen:
+                p.count += 1.
+                try: read = ckreads.next()
+                except StopIteration: return
+                pos = read.pos
+
+    count_reads(pieces,ckreads)
+    #--- Calculate RPK
+    for p in pieces:
+        p.rpk = toRPK(p.count,p.length)
+
+
+    def estimate_expression(feat_class, pieces, ids):
+        #--- Build the exons-transcripts structure matrix:
+        # Lines are exons, columns are transcripts,
+        # so that A[i,j]!=0 means "transcript Tj contains exon Ei".
+        if feat_class == Gene:
+            is_in = lambda p,g: g in p.gene_id.split('|')
+        elif feat_class == Transcript:
+            is_in = lambda p,t: t in p.transcripts
+        n = len(pieces)
+        m = len(ids)
+        A = zeros((n,m))
+        for i,p in enumerate(pieces):
+            for j,f in enumerate(ids):
+                A[i,j] = 1 if is_in(p,f) else 0
+        #--- Build the exons scores vector
+        E = asarray([p.rpk for p in pieces])
+        #--- Solve for RPK
+        T = lsqnonneg(A,E)
+        #--- Store result in *feat_class* objects
+        feats = []
+        for i,f in enumerate(ids):
+            exs = sorted([p for p in pieces if is_in(p,f)], key=lambda x:(x.start,x.end))
+            flen = sum(p.length for p in pieces if is_in(p,f))
+            feats.append(Transcript(name=f, start=exs[0].start, end=exs[-1].end,
+                    length=flen, rpk=T[0][i], count=fromRPK(T[0][i],flen),
+                    chrom=exs[0].chrom, gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
+        return feats
+
+    genes = estimate_expression(Gene, pieces, gene_ids)
+    transcripts = estimate_expression(Transcript, pieces, transcript_ids)
+
+    for t in transcripts: print t,t.count,t.rpk
+    for g in genes: print g,g.count,g.rpk
+
+    return genes,transcripts
 
 
 def rnacount(bamname, annotname):
@@ -232,7 +430,6 @@ def rnacount(bamname, annotname):
     annot.close()
     sam.close
 
-
 ######################################################################
 
 bamname = "testfiles/gapdhKO.bam"
@@ -241,79 +438,4 @@ annotname = "testfiles/mm9_mini.gtf"
 rnacount(bamname,annotname)
 
 
-
-
-
-
-
-
-
-                #if attrs['gene_name']=='Gapdh':
-                #    print "--------------------"
-                #print "processed up to", lastend, ":"
-                #for k,v in ckexons:
-                #    print v['exon_id'], v['transcript_id']
-                #if attrs['gene_name']=='Gapdh':
-                #    print "--------------------"
-
-
-
-
-
-
-
-#class Gene(GenomicObject):
-#    def __init__(self, exons=set(),transcripts=set(), **args):
-#        GenomicObject.__init__(self, **args)
-#        self.exons = exons               # list of exons contained
-#        self.transcripts = transcripts   # list of transcripts contained
-
-#class Transcript(GenomicObject):
-#    def __init__(self, exons=[], **args):
-#        GenomicObject.__init__(self, **args)
-#        self.exons = exons               # list of exons it contains
-
-
-
-    #if 0 and 'ENSMUST00000147954' in te_map:
-    #    print '-------ENSMUST00000147954'
-    #    for x in te_map['ENSMUST00000147954']: print x
-    #    print;
-    #    for x in tp_map['ENSMUST00000147954']: print x
-    #    print '-------ENSMUST00000117757'
-    #    for x in te_map['ENSMUST00000117757']: print x
-    #    print
-    #    for x in tp_map['ENSMUST00000117757']: print x
-    #    print '-------ENSMUST00000118875'
-    #    for x in te_map['ENSMUST00000118875']: print x
-    #    print
-    #    for x in tp_map['ENSMUST00000118875']: print x
-    #    print '-------ENSMUST00000073605'
-    #    for x in te_map['ENSMUST00000073605']: print x
-    #    print
-    #    for x in tp_map['ENSMUST00000073605']: print x
-    #    print '-------ENSMUST00000144205'
-    #    for x in te_map['ENSMUST00000144205']: print x
-    #    print
-    #    for x in tp_map['ENSMUST00000144205']: print x
-    #    print '-------ENSMUST00000144588'
-    #    for x in te_map['ENSMUST00000144588']: print x
-    #    print
-    #    for x in tp_map['ENSMUST00000144588']: print x
-    #    print '-------'
-
-
-    #if exon.gene_name == "Gapdh":
-    #    for e in ckexons: print e
-
-    #testexons = [e for e in ckexons if e.name[-4:] in ['5781','9315']]
-    #for e in testexons: print e
-    #print '------------'
-    #testpieces = cobble(testexons)
-    #for p in testpieces: print p
-
-
-
-    #if exon.gene_name == "Gapdh":
-    #    for p in pieces: print p
 
