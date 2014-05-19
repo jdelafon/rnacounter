@@ -137,7 +137,7 @@ class GenomicObject(object):
         self.count = count
         self.count_rev = count_rev
         self.rpk = rpk
-        self.strand = strand
+        self.strand = strand  # 1,-1,0
         self.length = length
         #self.seq = seq  # sequence
         self.multiplicity = multiplicity
@@ -172,27 +172,19 @@ class Exon(GenomicObject):
         E = GenomicObject.__and__(self,other)
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
-    def increment(self, x, read_rev=False, stranded=False):
+    def increment(self, x, alignment, multiple=False, stranded=False):
+        if multiple:
+            NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
+            x = x/NH[0]
         if stranded:
             # read/exon stand mismatch
-            if read_rev and self.strand == -1:
+            if alignment.is_reverse and self.strand != -1:
                 self.count_rev += x
             else:
                 self.count += x
         else:
             self.count += x
 
-"""
-inline void exon_list::increment( double x, size_type index, bool read_rev ) {
-    if (stranded) {
-// ----------- read/exon strand mismatch:
-    if (read_rev ^ (*this)[index].revstrand)
-        counts_antisense[index] += x;
-    else
-        counts_sense[index] += x;
-    } else counts_both[index] += x;
-  }
-"""
 
 class Transcript(GenomicObject):
     def __init__(self, exons=[], **args):
@@ -240,34 +232,6 @@ def cobble(exons, multiple=False):
         e.start = a[0]; e.end = b[0]; e.length = b[0]-a[0]
         cobbled.append(e)
     return cobbled
-
-
-class Counter(object):
-    def __init__(self, stranded=False):
-        self.n = 0 # read count
-        self.n_raw = 0 # read count, no NH flag
-        self.n_ws = 0 # read count, wrong strand
-        self.strand = 0 # exon strand
-        if stranded:
-            self.count_fct = self.count_stranded
-        else:
-            self.count_fct = self.count
-
-    def __call__(self, alignment):
-        self.count_fct(alignment)
-
-    def count(self, alignment):
-        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
-        self.n += NH[0]
-        self.n_raw += 1
-
-    def count_stranded(self, alignment):
-        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
-        if self.strand == 1 and alignment.is_reverse == False \
-        or self.strand == -1 and alignment.is_reverse == True:
-            self.n += NH[0]
-        else:
-            self.n_ws += NH[0]
 
 
 # Gapdh id: ENSMUSG00000057666
@@ -349,71 +313,75 @@ def process_chunk(ckexons, sam, chrom, lastend):
     ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
 
-    if 0:
-        #--- Count reads in each piece
-        def count_reads(pieces,ckreads):
-            #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
-            try: read = ckreads.next()
-            except StopIteration: return
-            pos = read.pos
-            rlen = read.rlen
-            for p in pieces:
-                if p.start + rlen < pos:
-                    continue
-                while pos < p.end + rlen:
-                    p.count += 1.
-                    try: read = ckreads.next()
-                    except StopIteration: return
-                    pos = read.pos
-    else:
-        #--- Count reads in each piece -- from rnacounter.cc
-        #def mapreads(alignment, exons, stranded=False):
-        def count_reads(exons,ckreads,stranded=False):
-            current_pos = 0   # exon_list.current_pos -- must be a pointer
-            for alignment in ckreads:
+    #--- Count reads in each piece
+    def count_reads0(pieces,ckreads):
+        #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
+        try: read = ckreads.next()
+        except StopIteration: return
+        pos = read.pos
+        rlen = read.rlen
+        for p in pieces:
+            if p.start + rlen < pos:
+                continue
+            while pos < p.end + rlen:
+                p.count += 1.
+                try: read = ckreads.next()
+                except StopIteration: return
+                pos = read.pos
+
+    #--- Count reads in each piece -- from rnacounter.cc
+    def count_reads(exons,ckreads,multiple=False,stranded=False):
+        """Adds (#aligned nucleotides/read length) to exon counts.
+        Deals with indels, junctions etc.
+        :param multiple: divide the count by the NH tag.
+        :param standed: for strand-specific protocols, use the strand information."""
+        current_pos = 0   # exon_list.current_pos -- must be a pointer
+        for alignment in ckreads:
+            if current_pos > len(exons): return 0
+            exon_end = exons[current_pos].end
+            ali_pos = alignment.pos
+            while exon_end <= ali_pos:
+                current_pos += 1
                 if current_pos > len(exons): return 0
                 exon_end = exons[current_pos].end
-                ali_pos = alignment.pos
-                while exon_end <= ali_pos:
-                    current_pos += 1
-                    if current_pos > len(exons): return 0
-                    else: exon_end = exons[current_pos].end
-                pos2 = current_pos
-                exon_start = exons[pos2].start
-                read_len = alignment.rlen
-                ali_len = 0
-                for op,shift in alignment.cigar:
-                    #op = alignment.cigar[j][0]     # &BAM_CIGAR_MASK ?
-                    #shift = alignment.cigar[j][1]  # >>BAM_CIGAR_SHIFT ?
-                    if op in [0,2,3]:  # [BAM_CMATCH,BAM_CDEL,BAM_CREF_SKIP]
+            pos2 = current_pos
+            exon_start = exons[pos2].start
+            read_len = alignment.rlen
+            ali_len = 0
+            for op,shift in alignment.cigar:
+                if op in [0,2,3]:  # [BAM_CMATCH,BAM_CDEL,BAM_CREF_SKIP]
+                    # If read crosses exon left bound
+                    if ali_pos < exon_start:
+                        ali_pos = min(exon_start, ali_pos+shift)
+                        shift = max(0, ali_pos+shift-exon_start)  # part of the read overlapping
+                    # If read crosses exon right bound, maybe next exon(s)
+                    while ali_pos+shift >= exon_end:
+                        if op == 0: ali_len += exon_end - ali_pos
+                        exons[pos2].increment(float(ali_len)/float(read_len), alignment, multiple, stranded)
+                        shift -= exon_end-ali_pos  # remaining part of the read
+                        ali_pos = exon_end
+                        ali_len = 0
+                        pos2 += 1
+                        if pos2 >= len(exons): return 0
+                        exon_start = exons[pos2].start
+                        exon_end = exons[pos2].end
                         if ali_pos < exon_start:
                             ali_pos = min(exon_start, ali_pos+shift)
-                            shift = max(0, shift-exon_start+ali_pos)
-                        while ali_pos+shift >= exon_end:
-                            if op == 0: ali_len += exon_end - ali_pos
-                            exons[pos2].increment(float(ali_len)/float(read_len), alignment.is_reverse, stranded)
-                            ali_pos = exon_end
-                            ali_len = 0
-                            shift -= exon_end-ali_pos
-                            pos2 += 1
-                            if pos2 >= len(exons): return 0
-                            exon_start = exons[pos2].start
-                            exon_end = exons[pos2].end
-                            if ali_pos < exon_start:
-                                ali_pos = min(exon_start, ali_pos+shift)
-                                shift = max(0, shift-exon_start+ali_pos)
-                        ali_pos += shift
-                        if op == 1: ali_len += shift
-                    if op == 1:
-                        ali_len += shift;
-                if ali_len < 1: return 0;
-                exons[pos2].increment(float(ali_len)/float(read_len), alignment.is_reverse, stranded)
-                return 0;
+                            shift = max(0, ali_pos+shift-exon_start)  # from exon start to end of the read
+                    ali_pos += shift
+                    if op == 0: ali_len += shift
+                elif op == 1:  # BAM_CINS
+                    ali_len += shift;
+            if ali_len < 1: return 0;
+            exons[pos2].increment(float(ali_len)/float(read_len), alignment, multiple, stranded)
 
-        count_reads(pieces,ckreads)
-        #--- Calculate RPK
-        for p in pieces:
-            p.rpk = toRPK(p.count,p.length)
+    if 0: count_reads = count_reads0
+    else: count_reads = count_reads
+
+    count_reads(pieces,ckreads)
+    #--- Calculate RPK
+    for p in pieces:
+        p.rpk = toRPK(p.count,p.length)
 
 
     def estimate_expression(feat_class, pieces, ids):
