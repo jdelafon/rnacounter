@@ -1,10 +1,29 @@
+"""
+Count reads on transcripts from a genome-level bam file and a
+non-overlapping set of exons.
+
+Usage:
+   rnacounter  [-n <int>] [-l <int>] [-s] [-m] [-c <string>] [-o <string>]
+                GTF BAM
+               [--version] [-h]
+
+Options:
+   -n <int>,  --normalize <int>         Normalization constant [default: total number of reads].
+   -l <int>,  --fraglength <int>        Average fragment length [default: 350].
+   -s,  --stranded                      Compute sense and antisense reads separately [default: False].
+   -m,  --multiple                      Divide count by NH flag for multipl mapping reads [default: False].
+   -c <string>,  --chromosome <string>  Chromosome names (accepted multiple times) [default: False].
+   -o <string>,  --outptut <string>     Output file to redirect stdout.
+   --version                            Displays version information and exits.
+   -h,  --help                          Displays usage information and exits.
+"""
 
 import pysam
 import os, sys
 import itertools
 from numpy import asarray, zeros
-import numpy
 import copy
+from scipy.optimize import nnls
 
 
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
@@ -30,97 +49,6 @@ def parse_gtf(row):
                 chrom=row[0], start=int(row[3])-1, end=int(row[4]),
                 name=exon_id, score=_score(row[5]), strand=_strand(row[6]),
                 transcripts=[attrs['transcript_id']])
-
-
-def lsqnonneg(C, d, x0=None, tol=None, itmax_factor=3):
-    """Linear least squares with nonnegativity constraints (NNLS), based on MATLAB's lsqnonneg function.
-
-    ``(x,resnorm,res) = lsqnonneg(C,d)`` returns
-
-    * the vector *x* that minimizes norm(d-Cx) subject to x >= 0
-    * the norm of residuals *resnorm* = norm(d-Cx)^2
-    * the residuals *res* = d-Cx
-
-    :param x0: Initial point for x.
-    :param tol: Tolerance to determine what is considered as close enough to zero.
-    :param itmax_factor: Maximum number of iterations.
-
-    :type C: nxm numpy array
-    :type d: nx1 numpy array
-    :type x0: mx1 numpy array
-    :type tol: float
-    :type itmax_factor: int
-    :rtype: *x*: numpy array, *resnorm*: float, *res*: numpy array
-
-    Reference: C.L. Lawson and R.J. Hanson, Solving Least-Squares Problems, Prentice-Hall, Chapter 23, p. 161, 1974.
-    `<http://diffusion-mri.googlecode.com/svn/trunk/Python/lsqnonneg.py>`_
-    """
-    def norm1(x):
-        return abs(x).sum().max()
-
-    def msize(x, dim):
-        s = x.shape
-        if dim >= len(s): return 1
-        else: return s[dim]
-
-    def positive(x):
-        """Set to zero all negative components of an array."""
-        for i in range(len(x)):
-            if x[i] < 0 : x[i] = 0
-        return x
-
-    eps = sys.float_info.epsilon
-    if tol is None: tol = 10*eps*norm1(C)*(max(C.shape)+1)
-    C = asarray(C)
-    (m,n) = C.shape
-    P = numpy.zeros(n)                       # set P of indices where ultimately x_j > 0 & w_j = 0
-    Z = ZZ = numpy.arange(1, n+1)            # set Z of indices where ultimately x_j = 0 & w_j <= 0
-    if x0 is None or any(x0 < 0): x = P
-    else: x = x0
-    resid = d - numpy.dot(C, x)
-    w = numpy.dot(C.T, resid)                # n-vector C'(d-Cx), "dual" of x, gradient of (1/2)*||d-Cx||^2
-    outeriter = it = 0
-    itmax = itmax_factor*n
-    # Outer loop "A" to hold positive coefficients
-    while numpy.any(Z) and numpy.any(w[ZZ-1] > tol): # if Z is empty or w_j<0 for all j, terminate.
-        outeriter += 1
-        t = w[ZZ-1].argmax()                 # find index t s.t. w_t = max(w), w_t in Z. So w_t > 0.
-        t = ZZ[t]
-        P[t-1]=t                             # move the index t from set Z to set P
-        Z[t-1]=0                             # Z becomes [0] if n=1
-        PP = numpy.where(P != 0)[0]+1        # non-zero elements of P for indexing, +1 (-1 later)
-        ZZ = numpy.where(Z != 0)[0]+1        # non-zero elements of Z for indexing, +1 (-1 later)
-        CP = numpy.zeros(C.shape)
-        CP[:, PP-1] = C[:, PP-1]             # CP[:,j] is C[:,j] if j in P, or 0 if j in Z
-        CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
-        z=numpy.dot(numpy.linalg.pinv(CP), d)                 # n-vector solution of least-squares min||d-CPx||
-        if isinstance(ZZ,numpy.ndarray) and len(ZZ) == 0:     # if Z = [0], ZZ = [] and makes it fail
-            return (positive(z), sum(resid*resid), resid)
-        else:
-            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0))) # define z_j := 0 for j in Z
-        # Inner loop "B" to remove negative elements from z if necessary
-        while numpy.any(z[PP-1] <= tol): # if z_j>0 for all j, set x=z and return to outer loop
-            it += 1
-            if it > itmax:
-                max_error = z[PP-1].max()
-                raise Exception('Exiting: Iteration count (=%d) exceeded\n \
-                      Try raising the tolerance tol. (max_error=%d)' % (it, max_error))
-            QQ = numpy.where((z <= tol) & (P != 0))[0]        # indices j in P s.t. z_j < 0
-            alpha = min(x[QQ]/(x[QQ] - z[QQ]))                # step chosen as large as possible s.t. x remains >= 0
-            x = x + alpha*(z-x)                               # move x by this step
-            ij = numpy.where((abs(x) < tol) & (P <> 0))[0]+1  # indices j in P for which x_j = 0
-            Z[ij-1] = ij                                      # Add to Z, remove from P
-            P[ij-1] = numpy.zeros(max(ij.shape))
-            PP = numpy.where(P != 0)[0]+1
-            ZZ = numpy.where(Z != 0)[0]+1
-            CP[:, PP-1] = C[:, PP-1]
-            CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
-            z=numpy.dot(numpy.linalg.pinv(CP), d)
-            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0)))
-        x = z
-        resid = d - numpy.dot(C, x)
-        w = numpy.dot(C.T, resid)
-    return (x, sum(resid*resid), resid)
 
 
 class GenomicObject(object):
@@ -175,7 +103,7 @@ class Exon(GenomicObject):
     def increment(self, x, alignment, multiple=False, stranded=False):
         if multiple:
             NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
-            x = x/NH[0]
+            x = x*NH[0]
         if stranded:
             # read/exon stand mismatch
             if alignment.is_reverse and self.strand != -1:
@@ -241,7 +169,7 @@ def cobble(exons, multiple=False):
 
 ######################################################################
 
-def process_chunk(ckexons, sam, chrom, lastend):
+def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
 
@@ -378,7 +306,7 @@ def process_chunk(ckexons, sam, chrom, lastend):
     if 0: count_reads = count_reads0
     else: count_reads = count_reads
 
-    count_reads(pieces,ckreads)
+    count_reads(pieces,ckreads,multiple,stranded)
     #--- Calculate RPK
     for p in pieces:
         p.rpk = toRPK(p.count,p.length)
@@ -401,14 +329,14 @@ def process_chunk(ckexons, sam, chrom, lastend):
         #--- Build the exons scores vector
         E = asarray([p.rpk for p in pieces])
         #--- Solve for RPK
-        T = lsqnonneg(A,E)
+        T,rnorm = nnls(A,E)
         #--- Store result in *feat_class* objects
         feats = []
         for i,f in enumerate(ids):
             exs = sorted([p for p in pieces if is_in(p,f)], key=lambda x:(x.start,x.end))
             flen = sum(p.length for p in pieces if is_in(p,f))
             feats.append(Transcript(name=f, start=exs[0].start, end=exs[-1].end,
-                    length=flen, rpk=T[0][i], count=fromRPK(T[0][i],flen),
+                    length=flen, rpk=T[i], count=fromRPK(T[i],flen),
                     chrom=exs[0].chrom, gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
         return feats
 
@@ -421,7 +349,8 @@ def process_chunk(ckexons, sam, chrom, lastend):
     return genes,transcripts
 
 
-def rnacount_main(bamname, annotname):
+def rnacount_main(bamname, annotname, multiple=False, stranded=False, output=sys.stdout,
+                  normalize=False, chromosomes=[], fraglength=0):
     """Annotation in GTF format, assumed to be sorted at least w.r.t. chrom name."""
     sam = pysam.Samfile(bamname, "rb")
     annot = open(annotname, "r")
@@ -456,21 +385,29 @@ def rnacount_main(bamname, annotname):
                 ckexons.append(exon)
             # Process the stored chunk of exons
             else:
-                process_chunk(ckexons, sam, chrom, lastend)
+                process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
                 ckexons = [exon]
             lastend = max(exon.end,lastend)
             lastgeneid = exon.gene_id
-        process_chunk(ckexons, sam, chrom, lastend)
+        process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
 
     annot.close()
     sam.close
 
 ######################################################################
 
-bamname = "testfiles/gapdhKO.bam"
-annotname = "testfiles/mm9_mini.gtf"
 
-rnacount_main(bamname,annotname)
+from docopt import docopt
 
+if __name__ == '__main__':
+    args = docopt(__doc__, version='0.1')
+    bamname = args['BAM']
+    annotname = args['GTF']
+    if args['-o'] is None: output = sys.stdout
 
+    bamname = "testfiles/gapdhKO.bam"
+    annotname = "testfiles/mm9_mini.gtf"
 
+    rnacount_main(bamname,annotname,
+                  multiple=args['-m'], stranded=args['-s'], output=args['-o'],
+                  normalize=args['-n'], chromosomes=args['-c'], fraglength=args['-l'])
