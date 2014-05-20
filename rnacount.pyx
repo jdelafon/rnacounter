@@ -1,15 +1,38 @@
+"""
+Count reads on genes and transcripts from a genome-level BAM file and a
+GTF file describing the exons, such as those provided by Emsembl or GenRep.
+The GTF is assumed to be sorted at least w.r.t. chromosome name,
+and the chromosome identifiers in the GTF must be the same as the BAM references.
+
+Usage:
+   rnacounter  [-n <int>] [-l <int>] [-s] [-m] [-c <string>] [-o <string>] BAM GTF
+               [--version] [-h]
+
+Options:
+   -n <int>, --normalize <int>          Normalization constant [default: total number of reads].
+   -l <int>, --fraglength <int>         Average fragment length [default: 350].
+   -s, --stranded                       Compute sense and antisense reads separately [default: False].
+   -m, --multiple                       Divide count by NH flag for multiply mapping reads [default: False].
+   -c <string>, --chromosomes <string>  Chromosome names (comma-separated list).
+   -o <string>, --output <string>       Output file to redirect stdout.
+   -v, --version                        Displays version information and exits.
+   -h, --help                           Displays usage information and exits.
+"""
 
 import pysam
 import os, sys
 import itertools
 from numpy import asarray, zeros
-import numpy
 import copy
+from scipy.optimize import nnls
+
+
+_TEST_ = True
 
 
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
-
 def parse_gtf(row):
+    """Parse one GTF line. Return None if not an 'exon'. Return False if row is empty."""
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
     def _score(x):
         if str(x) == '.': return 0
@@ -17,12 +40,12 @@ def parse_gtf(row):
     def _strand(x):
         smap = {'+':1, 1:1, '-':-1, -1:-1, '.':0, 0:0}
         return smap[x]
-    if not row: return
+    if not row: return False
     row = row.strip().split("\t")
     if len(row) < 9:
         raise ValueError("\"Attributes\" field required in GFF.")
     if row[2] != 'exon':
-        return False
+        return None
     attrs = (x.strip().split() for x in row[8].split(';'))  # {gene_id: "AAA", ...}
     attrs = dict((x[0],x[1].strip("\"")) for x in attrs)
     exon_id = attrs.get('exon_id', 'E%d'%Ecounter.next())
@@ -32,100 +55,9 @@ def parse_gtf(row):
                 transcripts=[attrs['transcript_id']])
 
 
-def lsqnonneg(C, d, x0=None, tol=None, itmax_factor=3):
-    """Linear least squares with nonnegativity constraints (NNLS), based on MATLAB's lsqnonneg function.
-
-    ``(x,resnorm,res) = lsqnonneg(C,d)`` returns
-
-    * the vector *x* that minimizes norm(d-Cx) subject to x >= 0
-    * the norm of residuals *resnorm* = norm(d-Cx)^2
-    * the residuals *res* = d-Cx
-
-    :param x0: Initial point for x.
-    :param tol: Tolerance to determine what is considered as close enough to zero.
-    :param itmax_factor: Maximum number of iterations.
-
-    :type C: nxm numpy array
-    :type d: nx1 numpy array
-    :type x0: mx1 numpy array
-    :type tol: float
-    :type itmax_factor: int
-    :rtype: *x*: numpy array, *resnorm*: float, *res*: numpy array
-
-    Reference: C.L. Lawson and R.J. Hanson, Solving Least-Squares Problems, Prentice-Hall, Chapter 23, p. 161, 1974.
-    `<http://diffusion-mri.googlecode.com/svn/trunk/Python/lsqnonneg.py>`_
-    """
-    def norm1(x):
-        return abs(x).sum().max()
-
-    def msize(x, dim):
-        s = x.shape
-        if dim >= len(s): return 1
-        else: return s[dim]
-
-    def positive(x):
-        """Set to zero all negative components of an array."""
-        for i in range(len(x)):
-            if x[i] < 0 : x[i] = 0
-        return x
-
-    eps = sys.float_info.epsilon
-    if tol is None: tol = 10*eps*norm1(C)*(max(C.shape)+1)
-    C = asarray(C)
-    (m,n) = C.shape
-    P = numpy.zeros(n)                       # set P of indices where ultimately x_j > 0 & w_j = 0
-    Z = ZZ = numpy.arange(1, n+1)            # set Z of indices where ultimately x_j = 0 & w_j <= 0
-    if x0 is None or any(x0 < 0): x = P
-    else: x = x0
-    resid = d - numpy.dot(C, x)
-    w = numpy.dot(C.T, resid)                # n-vector C'(d-Cx), "dual" of x, gradient of (1/2)*||d-Cx||^2
-    outeriter = it = 0
-    itmax = itmax_factor*n
-    # Outer loop "A" to hold positive coefficients
-    while numpy.any(Z) and numpy.any(w[ZZ-1] > tol): # if Z is empty or w_j<0 for all j, terminate.
-        outeriter += 1
-        t = w[ZZ-1].argmax()                 # find index t s.t. w_t = max(w), w_t in Z. So w_t > 0.
-        t = ZZ[t]
-        P[t-1]=t                             # move the index t from set Z to set P
-        Z[t-1]=0                             # Z becomes [0] if n=1
-        PP = numpy.where(P != 0)[0]+1        # non-zero elements of P for indexing, +1 (-1 later)
-        ZZ = numpy.where(Z != 0)[0]+1        # non-zero elements of Z for indexing, +1 (-1 later)
-        CP = numpy.zeros(C.shape)
-        CP[:, PP-1] = C[:, PP-1]             # CP[:,j] is C[:,j] if j in P, or 0 if j in Z
-        CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
-        z=numpy.dot(numpy.linalg.pinv(CP), d)                 # n-vector solution of least-squares min||d-CPx||
-        if isinstance(ZZ,numpy.ndarray) and len(ZZ) == 0:     # if Z = [0], ZZ = [] and makes it fail
-            return (positive(z), sum(resid*resid), resid)
-        else:
-            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0))) # define z_j := 0 for j in Z
-        # Inner loop "B" to remove negative elements from z if necessary
-        while numpy.any(z[PP-1] <= tol): # if z_j>0 for all j, set x=z and return to outer loop
-            it += 1
-            if it > itmax:
-                max_error = z[PP-1].max()
-                raise Exception('Exiting: Iteration count (=%d) exceeded\n \
-                      Try raising the tolerance tol. (max_error=%d)' % (it, max_error))
-            QQ = numpy.where((z <= tol) & (P != 0))[0]        # indices j in P s.t. z_j < 0
-            alpha = min(x[QQ]/(x[QQ] - z[QQ]))                # step chosen as large as possible s.t. x remains >= 0
-            x = x + alpha*(z-x)                               # move x by this step
-            ij = numpy.where((abs(x) < tol) & (P <> 0))[0]+1  # indices j in P for which x_j = 0
-            Z[ij-1] = ij                                      # Add to Z, remove from P
-            P[ij-1] = numpy.zeros(max(ij.shape))
-            PP = numpy.where(P != 0)[0]+1
-            ZZ = numpy.where(Z != 0)[0]+1
-            CP[:, PP-1] = C[:, PP-1]
-            CP[:, ZZ-1] = numpy.zeros((m, msize(ZZ, 1)))
-            z=numpy.dot(numpy.linalg.pinv(CP), d)
-            z[ZZ-1] = numpy.zeros((msize(ZZ,1), msize(ZZ,0)))
-        x = z
-        resid = d - numpy.dot(C, x)
-        w = numpy.dot(C.T, resid)
-    return (x, sum(resid*resid), resid)
-
-
 class GenomicObject(object):
     def __init__(self, id='',gene_id='',gene_name='',chrom='',start=0,end=0,
-                 name='',score=0.0,count=0,rpk=0.0,strand=0,length=0,seq='',multiplicity=1):
+                 name='',score=0.0,count=0,count_rev=0,rpk=0.0,strand=0,length=0,seq='',multiplicity=1):
         self.id = id
         self.gene_id = gene_id
         self.gene_name = gene_name
@@ -135,8 +67,9 @@ class GenomicObject(object):
         self.name = name
         #self.score = score
         self.count = count
+        self.count_rev = count_rev
         self.rpk = rpk
-        self.strand = strand
+        self.strand = strand  # 1,-1,0
         self.length = length
         #self.seq = seq  # sequence
         self.multiplicity = multiplicity
@@ -171,6 +104,19 @@ class Exon(GenomicObject):
         E = GenomicObject.__and__(self,other)
         E.transcripts = set(self.transcripts) | set(other.transcripts)
         return E
+    def increment(self, x, alignment, multiple=False, stranded=False):
+        if multiple:
+            NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
+            x = x*NH[0]
+        if stranded:
+            # read/exon stand mismatch
+            if alignment.is_reverse and self.strand != -1:
+                self.count_rev += x
+            else:
+                self.count += x
+        else:
+            self.count += x
+
 
 class Transcript(GenomicObject):
     def __init__(self, exons=[], **args):
@@ -220,42 +166,28 @@ def cobble(exons, multiple=False):
     return cobbled
 
 
-class Counter(object):
-    def __init__(self, stranded=False):
-        self.n = 0 # read count
-        self.n_raw = 0 # read count, no NH flag
-        self.n_ws = 0 # read count, wrong strand
-        self.strand = 0 # exon strand
-        if stranded:
-            self.count_fct = self.count_stranded
-        else:
-            self.count_fct = self.count
-
-    def __call__(self, alignment):
-        self.count_fct(alignment)
-
-    def count(self, alignment):
-        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
-        self.n += NH[0]
-        self.n_raw += 1
-
-    def count_stranded(self, alignment):
-        NH = [1.0/t[1] for t in alignment.tags if t[0]=='NH']+[1]
-        if self.strand == 1 and alignment.is_reverse == False \
-        or self.strand == -1 and alignment.is_reverse == True:
-            self.n += NH[0]
-        else:
-            self.n_ws += NH[0]
-
-
-# Gapdh id: ENSMUSG00000057666
-# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
-#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
-
-
 ######################################################################
 
-def process_chunk(ckexons, sam, chrom, lastend):
+
+def process_chrexons(chrexons, sam,chrom, multiple, stranded):
+    # Process chunks of overlapping exons / exons of the same gene
+    lastend = chrexons[0].end
+    lastgeneid = ''
+    ckexons = []
+    for exon in chrexons:
+        # Store
+        if (exon.start <= lastend) or (exon.gene_id == lastgeneid):
+            ckexons.append(exon)
+        # Process the stored chunk of exons
+        else:
+            ckgenes,cktranscripts = process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
+            ckexons = [exon]
+        lastend = max(exon.end,lastend)
+        lastgeneid = exon.gene_id
+    ckgenes,cktranscripts = process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
+
+
+def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
 
@@ -263,14 +195,6 @@ def process_chunk(ckexons, sam, chrom, lastend):
         return 1000.0 * count / length
     def fromRPK(rpk,length):
         return length * rpk / 1000.
-
-    #if ckexons[0].gene_name != "Gapdh": return 1
-
-
-    #--- Convert chromosome name
-    if chrom[:3] == "NC_" : pass
-    try: int(chrom); chrom = "chr"+chrom
-    except: pass
 
 
     #--- Regroup occurrences of the same Exon from a different transcript
@@ -310,40 +234,57 @@ def process_chunk(ckexons, sam, chrom, lastend):
     gene_ids = list(set(e.gene_id for e in exons))
 
 
-    #--- Remake the transcript-pieces mapping
-    tp_map = {}
-    for p in pieces:
-        for tx in p.transcripts:
-            tp_map.setdefault(tx,[]).append(p)
-    #--- Remake the transcripts-exons mapping
-    te_map = {}  # map {transcript: [exons]}
-    for exon in exons:
-        txs = exon.transcripts
-        for t in txs:
-            te_map.setdefault(t,[]).append(exon)
-
-
     #--- Get all reads from this chunk - iterator
     ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
 
-    #--- Count reads in each piece
-    def count_reads(pieces,ckreads):
-        #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
-        try: read = ckreads.next()
-        except StopIteration: return
-        pos = read.pos
-        rlen = read.rlen
-        for p in pieces:
-            if p.start + rlen < pos:
-                continue
-            while pos < p.end + rlen:
-                p.count += 1.
-                try: read = ckreads.next()
-                except StopIteration: return
-                pos = read.pos
+    #--- Count reads in each piece -- from rnacounter.cc
+    def count_reads(exons,ckreads,multiple=False,stranded=False):
+        """Adds (#aligned nucleotides/read length) to exon counts.
+        Deals with indels, junctions etc.
+        :param multiple: divide the count by the NH tag.
+        :param standed: for strand-specific protocols, use the strand information."""
+        current_pos = 0   # exon_list.current_pos -- must be a pointer
+        for alignment in ckreads:
+            if current_pos > len(exons): return 0
+            exon_end = exons[current_pos].end
+            ali_pos = alignment.pos
+            while exon_end <= ali_pos:
+                current_pos += 1
+                if current_pos > len(exons): return 0
+                exon_end = exons[current_pos].end
+            pos2 = current_pos
+            exon_start = exons[pos2].start
+            read_len = alignment.rlen
+            ali_len = 0
+            for op,shift in alignment.cigar:
+                if op in [0,2,3]:  # [BAM_CMATCH,BAM_CDEL,BAM_CREF_SKIP]
+                    # If read crosses exon left bound
+                    if ali_pos < exon_start:
+                        ali_pos = min(exon_start, ali_pos+shift)
+                        shift = max(0, ali_pos+shift-exon_start)  # part of the read overlapping
+                    # If read crosses exon right bound, maybe next exon(s)
+                    while ali_pos+shift >= exon_end:
+                        if op == 0: ali_len += exon_end - ali_pos
+                        exons[pos2].increment(float(ali_len)/float(read_len), alignment, multiple, stranded)
+                        shift -= exon_end-ali_pos  # remaining part of the read
+                        ali_pos = exon_end
+                        ali_len = 0
+                        pos2 += 1
+                        if pos2 >= len(exons): return 0
+                        exon_start = exons[pos2].start
+                        exon_end = exons[pos2].end
+                        if ali_pos < exon_start:
+                            ali_pos = min(exon_start, ali_pos+shift)
+                            shift = max(0, ali_pos+shift-exon_start)  # from exon start to end of the read
+                    ali_pos += shift
+                    if op == 0: ali_len += shift
+                elif op == 1:  # BAM_CINS
+                    ali_len += shift;
+            if ali_len < 1: return 0;
+            exons[pos2].increment(float(ali_len)/float(read_len), alignment, multiple, stranded)
 
-    count_reads(pieces,ckreads)
+    count_reads(pieces,ckreads,multiple,stranded)
     #--- Calculate RPK
     for p in pieces:
         p.rpk = toRPK(p.count,p.length)
@@ -366,76 +307,94 @@ def process_chunk(ckexons, sam, chrom, lastend):
         #--- Build the exons scores vector
         E = asarray([p.rpk for p in pieces])
         #--- Solve for RPK
-        T = lsqnonneg(A,E)
+        T,rnorm = nnls(A,E)
         #--- Store result in *feat_class* objects
         feats = []
         for i,f in enumerate(ids):
             exs = sorted([p for p in pieces if is_in(p,f)], key=lambda x:(x.start,x.end))
             flen = sum(p.length for p in pieces if is_in(p,f))
             feats.append(Transcript(name=f, start=exs[0].start, end=exs[-1].end,
-                    length=flen, rpk=T[0][i], count=fromRPK(T[0][i],flen),
+                    length=flen, rpk=T[i], count=fromRPK(T[i],flen),
                     chrom=exs[0].chrom, gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
         return feats
 
     genes = estimate_expression(Gene, pieces, gene_ids)
     transcripts = estimate_expression(Transcript, pieces, transcript_ids)
 
-    for t in transcripts: print t,t.count,t.rpk
-    for g in genes: print g,g.count,g.rpk
+    # Test
+    if _TEST_ and exons[0].gene_name == "Gapdh":
+        print "Transcripts:"
+        for t in transcripts: print t,t.count,t.rpk
+        print "Gene:"
+        for g in genes: print g,g.count,g.rpk
+        print "Pieces:"
+        for p in pieces:print p,p.rpk
 
     return genes,transcripts
 
 
-def rnacount(bamname, annotname):
-    """Annotation in GTF format, assumed to be sorted at least w.r.t. chrom name."""
+def rnacount_main(bamname, annotname, multiple=False, stranded=False, output=sys.stdout,
+                  normalize=False, chromosomes=[], fraglength=0):
+
     sam = pysam.Samfile(bamname, "rb")
     annot = open(annotname, "r")
 
-    row = annot.readline().strip()
-    exon0 = parse_gtf(row)
-    chrom = exon0.chrom
+    if len(chromosomes) > 0: chromosomes = [c for c in sam.references if c in chromosomes]
+    else: chromosomes = sam.references
+
+    chrom = ''
+    while chrom not in chromosomes:
+        exon = None
+        while exon is None:
+            row = annot.readline().strip()
+            exon = parse_gtf(row)
+        chrom = exon.chrom
     lastchrom = chrom
 
     while row:
-
-        # Load all GTF exons of a chromosome in memory and sort
+        # Load all GTF exons of a chromosome in memory, sort and process
         chrexons = []
-        while chrom == lastchrom:  # start <= lastend and
-            exon = parse_gtf(row)
-            if exon.end - exon.start > 1 :
-                chrexons.append(exon)
-            row = annot.readline().strip()
-            if not row:
-                break
-        lastchrom = chrom
-        chrexons.sort(key=lambda x: (x.start,x.end))
         print ">> Chromosome", chrom
-
-        # Process chunks of overlapping exons / exons of the same gene
-        lastend = chrexons[0].end
-        lastgeneid = ''
-        ckexons = []
-        for exon in chrexons:
-            # Store
-            if (exon.start <= lastend) or (exon.gene_id == lastgeneid):
-                ckexons.append(exon)
-            # Process the stored chunk of exons
-            else:
-                process_chunk(ckexons, sam, chrom, lastend)
-                ckexons = [exon]
-            lastend = max(exon.end,lastend)
-            lastgeneid = exon.gene_id
-        process_chunk(ckexons, sam, chrom, lastend)
+        while chrom == lastchrom:
+            if (exon.end - exon.start > 1) and (exon.chrom in chromosomes):
+                chrexons.append(exon)
+            # Fetch next exon
+            exon = None
+            while exon is None:
+                row = annot.readline().strip()
+                exon = parse_gtf(row)  # None if not an exon, False if EOF
+            chrom = exon.chrom
+            if not row: break
+        chrexons.sort(key=lambda x: (x.start,x.end))
+        #chrgenes, chrtranscripts = process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
+        process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
+        lastchrom = chrom
 
     annot.close()
     sam.close
 
 ######################################################################
 
-bamname = "testfiles/gapdhKO.bam"
-annotname = "testfiles/mm9_mini.gtf"
 
-rnacount(bamname,annotname)
+from docopt import docopt
+
+if __name__ == '__main__':
+    args = docopt(__doc__, version='0.1')
+    bamname = os.path.abspath(args['BAM'])
+    annotname = os.path.abspath(args['GTF'])
+    if args['--output'] is None: output = sys.stdout
+    if args['--chromosomes'] is None: chromosomes = []
+    else: chromosomes = args['--chromosomes'].split(',')
+
+    rnacount_main(bamname,annotname,
+                  multiple=args['--multiple'], stranded=args['--stranded'],
+                  output=args['--output'], normalize=args['--normalize'],
+                  chromosomes=chromosomes, fraglength=args['--fraglength'])
 
 
+
+
+# Gapdh id: ENSMUSG00000057666
+# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
+#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
 

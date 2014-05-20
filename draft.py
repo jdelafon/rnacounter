@@ -27,7 +27,7 @@ import copy
 from scipy.optimize import nnls
 
 
-_TEST_ = True
+_TEST_ = False
 
 
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
@@ -363,15 +363,16 @@ def rnacount_main(bamname, annotname, multiple=False, stranded=False, output=sys
             while exon is None:
                 row = annot.readline().strip()
                 exon = parse_gtf(row)  # None if not an exon, False if EOF
-            chrom = exon.chrom
             if not row: break
-        chrexons.sort(key=lambda x: (x.start,x.end))
-        #chrgenes, chrtranscripts = process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
-        process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
+            chrom = exon.chrom
+        if len(chrexons) > 0:
+            chrexons.sort(key=lambda x: (x.start,x.end))
+            process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
         lastchrom = chrom
 
     annot.close()
     sam.close
+
 
 ######################################################################
 
