@@ -1,21 +1,22 @@
 """
-Count reads on transcripts from a genome-level bam file and a
-non-overlapping set of exons.
+Count reads on genes and transcripts from a genome-level BAM file and a
+GTF file describing the exons, such as those provided by Emsembl or GenRep.
+The GTF is assumed to be sorted at least w.r.t. chromosome name,
+and the chromosome identifiers in the GTF must be the same as the BAM references.
 
 Usage:
-   rnacounter  [-n <int>] [-l <int>] [-s] [-m] [-c <string>] [-o <string>]
-                GTF BAM
+   rnacounter  [-n <int>] [-l <int>] [-s] [-m] [-c <string>] [-o <string>] BAM GTF
                [--version] [-h]
 
 Options:
-   -n <int>,  --normalize <int>         Normalization constant [default: total number of reads].
-   -l <int>,  --fraglength <int>        Average fragment length [default: 350].
-   -s,  --stranded                      Compute sense and antisense reads separately [default: False].
-   -m,  --multiple                      Divide count by NH flag for multipl mapping reads [default: False].
-   -c <string>,  --chromosome <string>  Chromosome names (accepted multiple times) [default: False].
-   -o <string>,  --outptut <string>     Output file to redirect stdout.
-   --version                            Displays version information and exits.
-   -h,  --help                          Displays usage information and exits.
+   -n <int>, --normalize <int>          Normalization constant [default: total number of reads].
+   -l <int>, --fraglength <int>         Average fragment length [default: 350].
+   -s, --stranded                       Compute sense and antisense reads separately [default: False].
+   -m, --multiple                       Divide count by NH flag for multiply mapping reads [default: False].
+   -c <string>, --chromosomes <string>  Chromosome names (comma-separated list).
+   -o <string>, --output <string>       Output file to redirect stdout.
+   -v, --version                        Displays version information and exits.
+   -h, --help                           Displays usage information and exits.
 """
 
 import pysam
@@ -27,8 +28,8 @@ from scipy.optimize import nnls
 
 
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
-
 def parse_gtf(row):
+    """Parse one GTF line. Return None if not an 'exon'. Return False if row is empty."""
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
     def _score(x):
         if str(x) == '.': return 0
@@ -36,12 +37,12 @@ def parse_gtf(row):
     def _strand(x):
         smap = {'+':1, 1:1, '-':-1, -1:-1, '.':0, 0:0}
         return smap[x]
-    if not row: return
+    if not row: return False
     row = row.strip().split("\t")
     if len(row) < 9:
         raise ValueError("\"Attributes\" field required in GFF.")
     if row[2] != 'exon':
-        return False
+        return None
     attrs = (x.strip().split() for x in row[8].split(';'))  # {gene_id: "AAA", ...}
     attrs = dict((x[0],x[1].strip("\"")) for x in attrs)
     exon_id = attrs.get('exon_id', 'E%d'%Ecounter.next())
@@ -169,6 +170,25 @@ def cobble(exons, multiple=False):
 
 ######################################################################
 
+
+def process_chrexons(chrexons, sam,chrom, multiple, stranded):
+    # Process chunks of overlapping exons / exons of the same gene
+    lastend = chrexons[0].end
+    lastgeneid = ''
+    ckexons = []
+    for exon in chrexons:
+        # Store
+        if (exon.start <= lastend) or (exon.gene_id == lastgeneid):
+            ckexons.append(exon)
+        # Process the stored chunk of exons
+        else:
+            process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
+            ckexons = [exon]
+        lastend = max(exon.end,lastend)
+        lastgeneid = exon.gene_id
+    process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
+
+
 def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
@@ -179,13 +199,6 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
         return length * rpk / 1000.
 
     #if ckexons[0].gene_name != "Gapdh": return 1
-
-
-    #--- Convert chromosome name
-    if chrom[:3] == "NC_" : pass
-    try: int(chrom); chrom = "chr"+chrom
-    except: pass
-
 
     #--- Regroup occurrences of the same Exon from a different transcript
     exons = []
@@ -343,53 +356,53 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     genes = estimate_expression(Gene, pieces, gene_ids)
     transcripts = estimate_expression(Transcript, pieces, transcript_ids)
 
-    for t in transcripts: print t,t.count,t.rpk
-    for g in genes: print g,g.count,g.rpk
+    if exons[0].gene_name == "Gapdh":
+        print "Transcripts:"
+        for t in transcripts: print t,t.count,t.rpk
+        print "Gene:"
+        for g in genes: print g,g.count,g.rpk
+        print "Pieces:"
+        for p in pieces:print p,p.rpk
+        sys.exit(0)
 
     return genes,transcripts
 
 
 def rnacount_main(bamname, annotname, multiple=False, stranded=False, output=sys.stdout,
                   normalize=False, chromosomes=[], fraglength=0):
-    """Annotation in GTF format, assumed to be sorted at least w.r.t. chrom name."""
+
     sam = pysam.Samfile(bamname, "rb")
     annot = open(annotname, "r")
 
-    row = annot.readline().strip()
-    exon0 = parse_gtf(row)
-    chrom = exon0.chrom
+    if len(chromosomes) > 0: chromosomes = [c for c in sam.references if c in chromosomes]
+    else: chromosomes = sam.references
+
+    chrom = ''
+    while chrom not in chromosomes:
+        exon = None
+        while exon is None:
+            row = annot.readline().strip()
+            exon = parse_gtf(row)
+        chrom = exon.chrom
     lastchrom = chrom
 
     while row:
-
-        # Load all GTF exons of a chromosome in memory and sort
+        # Load all GTF exons of a chromosome in memory, sort and process
         chrexons = []
-        while chrom == lastchrom:  # start <= lastend and
-            exon = parse_gtf(row)
-            if exon.end - exon.start > 1 :
-                chrexons.append(exon)
-            row = annot.readline().strip()
-            if not row:
-                break
-        lastchrom = chrom
-        chrexons.sort(key=lambda x: (x.start,x.end))
         print ">> Chromosome", chrom
-
-        # Process chunks of overlapping exons / exons of the same gene
-        lastend = chrexons[0].end
-        lastgeneid = ''
-        ckexons = []
-        for exon in chrexons:
-            # Store
-            if (exon.start <= lastend) or (exon.gene_id == lastgeneid):
-                ckexons.append(exon)
-            # Process the stored chunk of exons
-            else:
-                process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
-                ckexons = [exon]
-            lastend = max(exon.end,lastend)
-            lastgeneid = exon.gene_id
-        process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
+        while chrom == lastchrom:
+            if (exon.end - exon.start > 1) and (exon.chrom in chromosomes):
+                chrexons.append(exon)
+            # Fetch next exon
+            exon = None
+            while exon is None:
+                row = annot.readline().strip()
+                exon = parse_gtf(row)  # None if not an exon, False if EOF
+            chrom = exon.chrom
+            if not row: break
+        chrexons.sort(key=lambda x: (x.start,x.end))
+        process_chrexons(chrexons, sam, lastchrom, multiple,stranded)
+        lastchrom = chrom
 
     annot.close()
     sam.close
@@ -401,13 +414,18 @@ from docopt import docopt
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='0.1')
-    bamname = args['BAM']
-    annotname = args['GTF']
-    if args['-o'] is None: output = sys.stdout
+    print args
+    bamname = os.path.abspath(args['BAM'])
+    annotname = os.path.abspath(args['GTF'])
+    if args['--output'] is None: output = sys.stdout
+    if args['--chromosomes'] is None: chromosomes = []
+    else: chromosomes = args['--chromosomes'].split(',')
 
-    bamname = "testfiles/gapdhKO.bam"
-    annotname = "testfiles/mm9_mini.gtf"
+    # TEST
+    #bamname = "testfiles/gapdhKO.bam"
+    #annotname = "testfiles/mm9_mini_renamed.gtf"
 
-    rnacount_main(bamname,annotname,
-                  multiple=args['-m'], stranded=args['-s'], output=args['-o'],
-                  normalize=args['-n'], chromosomes=args['-c'], fraglength=args['-l'])
+    #rnacount_main(bamname,annotname,
+    #              multiple=args['--multiple'], stranded=args['--stranded'],
+    #              output=args['--output'], normalize=args['--normalize'],
+    #              chromosomes=chromosomes, fraglength=args['--fraglength'])
