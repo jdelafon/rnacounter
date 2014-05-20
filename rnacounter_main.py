@@ -16,7 +16,7 @@ Options:
    -l <int>, --fraglength <int>     Average fragment length [default: 350].
    -s, --stranded                   Compute sense and antisense reads separately [default: False].
    -m, --multiple                   Divide count by NH flag for multiply mapping reads [default: False].
-   -c CHROMS, --chromosomes CHROMS  Chromosome names (comma-separated list).
+   -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout.
    -v, --version                    Displays version information and exits.
    -h, --help                       Displays usage information and exits.
