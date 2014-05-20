@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 """
 Count reads on genes and transcripts from a genome-level BAM file and a
 GTF file describing the exons, such as those provided by Emsembl or GenRep.
@@ -19,7 +21,7 @@ Options:
    -h, --help                           Displays usage information and exits.
 """
 
-from rnacount import rnacount_main
+from rnacounter import rnacounter_main
 
 from docopt import docopt
 import os,sys
@@ -32,7 +34,7 @@ if __name__ == '__main__':
     if args['--chromosomes'] is None: chromosomes = []
     else: chromosomes = args['--chromosomes'].split(',')
 
-    rnacount_main(bamname,annotname,
+    rnacounter_main(bamname,annotname,
                   multiple=args['--multiple'], stranded=args['--stranded'],
                   output=args['--output'], normalize=args['--normalize'],
                   chromosomes=chromosomes, fraglength=args['--fraglength'])
