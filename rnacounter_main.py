@@ -32,14 +32,20 @@ if __name__ == '__main__':
     args = docopt(__doc__, version='0.1')
     bamname = os.path.abspath(args['BAM'])
     annotname = os.path.abspath(args['GTF'])
+
     if args['--output'] is None: args['--output'] = sys.stdout
     else: args['--output'] = open(args['--output'], "wb")
+
     if args['--chromosomes'] is None: args['--chromosomes'] = []
     else: args['--chromosomes'] = args['--chromosomes'].split(',')
-    assert args['--type'].lower() in ["genes","transcripts"], \
-        "TYPE must be one of 'genes' or 'transcripts'"
-    options = dict((k.lstrip('-'),v) for k,v in args.iteritems())
 
+    # Type: one can actually give both as "-t genes,transcripts" but they
+    # will be mixed in the output stream
+    args['--type'] = args['--type'].split(',')
+    assert all(x.lower() in ["genes","transcripts"] for x in args['--type']), \
+        "TYPE must be one of 'genes' or 'transcripts'"
+
+    options = dict((k.lstrip('-'),v) for k,v in args.iteritems())
     rnacounter_main(bamname,annotname, **options)
 
     args['--output'].close()
