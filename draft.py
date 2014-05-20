@@ -27,6 +27,9 @@ import copy
 from scipy.optimize import nnls
 
 
+_TEST_ = True
+
+
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 def parse_gtf(row):
     """Parse one GTF line. Return None if not an 'exon'. Return False if row is empty."""
@@ -163,11 +166,6 @@ def cobble(exons, multiple=False):
     return cobbled
 
 
-# Gapdh id: ENSMUSG00000057666
-# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
-#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
-
-
 ######################################################################
 
 
@@ -182,11 +180,11 @@ def process_chrexons(chrexons, sam,chrom, multiple, stranded):
             ckexons.append(exon)
         # Process the stored chunk of exons
         else:
-            process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
+            ckgenes,cktranscripts = process_chunk(ckexons, sam, chrom, lastend, multiple, stranded)
             ckexons = [exon]
         lastend = max(exon.end,lastend)
         lastgeneid = exon.gene_id
-    process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
+    ckgenes,cktranscripts = process_chunk(ckexons, sam, chrom, lastend, multiple,stranded)
 
 
 def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
@@ -198,7 +196,6 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     def fromRPK(rpk,length):
         return length * rpk / 1000.
 
-    #if ckexons[0].gene_name != "Gapdh": return 1
 
     #--- Regroup occurrences of the same Exon from a different transcript
     exons = []
@@ -237,38 +234,9 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     gene_ids = list(set(e.gene_id for e in exons))
 
 
-    #--- Remake the transcript-pieces mapping
-    tp_map = {}
-    for p in pieces:
-        for tx in p.transcripts:
-            tp_map.setdefault(tx,[]).append(p)
-    #--- Remake the transcripts-exons mapping
-    te_map = {}  # map {transcript: [exons]}
-    for exon in exons:
-        txs = exon.transcripts
-        for t in txs:
-            te_map.setdefault(t,[]).append(exon)
-
-
     #--- Get all reads from this chunk - iterator
     ckreads = sam.fetch(chrom, exons[0].start, lastend)
 
-
-    #--- Count reads in each piece
-    def count_reads0(pieces,ckreads):
-        #NH = [1.0/t[1] for t in read.tags if t[0]=='NH']+[1]
-        try: read = ckreads.next()
-        except StopIteration: return
-        pos = read.pos
-        rlen = read.rlen
-        for p in pieces:
-            if p.start + rlen < pos:
-                continue
-            while pos < p.end + rlen:
-                p.count += 1.
-                try: read = ckreads.next()
-                except StopIteration: return
-                pos = read.pos
 
     #--- Count reads in each piece -- from rnacounter.cc
     def count_reads(exons,ckreads,multiple=False,stranded=False):
@@ -316,9 +284,6 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
             if ali_len < 1: return 0;
             exons[pos2].increment(float(ali_len)/float(read_len), alignment, multiple, stranded)
 
-    if 0: count_reads = count_reads0
-    else: count_reads = count_reads
-
     count_reads(pieces,ckreads,multiple,stranded)
     #--- Calculate RPK
     for p in pieces:
@@ -356,14 +321,14 @@ def process_chunk(ckexons, sam, chrom, lastend, multiple, stranded):
     genes = estimate_expression(Gene, pieces, gene_ids)
     transcripts = estimate_expression(Transcript, pieces, transcript_ids)
 
-    if exons[0].gene_name == "Gapdh":
+    # Test
+    if _TEST_ and exons[0].gene_name == "Gapdh":
         print "Transcripts:"
         for t in transcripts: print t,t.count,t.rpk
         print "Gene:"
         for g in genes: print g,g.count,g.rpk
         print "Pieces:"
         for p in pieces:print p,p.rpk
-        sys.exit(0)
 
     return genes,transcripts
 
@@ -401,7 +366,8 @@ def rnacount_main(bamname, annotname, multiple=False, stranded=False, output=sys
             chrom = exon.chrom
             if not row: break
         chrexons.sort(key=lambda x: (x.start,x.end))
-        process_chrexons(chrexons, sam, lastchrom, multiple,stranded)
+        #chrgenes, chrtranscripts = process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
+        process_chrexons(chrexons,sam,lastchrom, multiple,stranded)
         lastchrom = chrom
 
     annot.close()
@@ -414,18 +380,21 @@ from docopt import docopt
 
 if __name__ == '__main__':
     args = docopt(__doc__, version='0.1')
-    print args
     bamname = os.path.abspath(args['BAM'])
     annotname = os.path.abspath(args['GTF'])
     if args['--output'] is None: output = sys.stdout
     if args['--chromosomes'] is None: chromosomes = []
     else: chromosomes = args['--chromosomes'].split(',')
 
-    # TEST
-    #bamname = "testfiles/gapdhKO.bam"
-    #annotname = "testfiles/mm9_mini_renamed.gtf"
+    rnacount_main(bamname,annotname,
+                  multiple=args['--multiple'], stranded=args['--stranded'],
+                  output=args['--output'], normalize=args['--normalize'],
+                  chromosomes=chromosomes, fraglength=args['--fraglength'])
 
-    #rnacount_main(bamname,annotname,
-    #              multiple=args['--multiple'], stranded=args['--stranded'],
-    #              output=args['--output'], normalize=args['--normalize'],
-    #              chromosomes=chromosomes, fraglength=args['--fraglength'])
+
+
+
+# Gapdh id: ENSMUSG00000057666
+# Gapdh transcripts: ENSMUST00000147954, ENSMUST00000147954, ENSMUST00000118875
+#                    ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588
+
