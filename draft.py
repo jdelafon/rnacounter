@@ -350,7 +350,9 @@ def rnacounter_main(bamname, annotname, **options):
         Ncounter = Counter()
         for ref,length in itertools.izip(sam.references,sam.lengths):
             sam.fetch(ref,0,length, callback=Ncounter)
-    options['normalize'] = float(Ncounter.n) / 1e6
+        options['normalize'] = float(Ncounter.n) / 1e6
+    else:
+        options['normalize'] = float(options['normalize'])
 
     # Initialize
     chrom = ''
