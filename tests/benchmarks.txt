@@ -1,0 +1,99 @@
+
+* mefKO.bam: complete alignment on mm9 (HTSstation Mapping 3XTw8WNAnFsl0EX2fvVb)
+
+
+            #############
+            #  28.05.14 #
+            #############
+
+
+Pure Python:
+=============
+real	5m1.901s
+user	4m41.739s
+sys	0m5.929s
+
+Compiled:
+==========
+real	4m3.282s
+user	3m48.855s
+sys	0m5.584s
+
+With .pxd:
+===========
+real	3m40.137s
+user	3m25.320s
+sys	0m5.413s
+
+real	3m45.083s
+user	3m29.161s
+sys	0m5.238s
+
+real	3m27.375s
+user	3m19.240s
+sys	0m4.795s
+
+Cython:
+========
+real   2m12.479s
+user   2m3.433s
+sys    0m3.709s
+
+real   2m24.614s
+user   2m16.341s
+sys    0m3.921s
+
+real	2m45.098s
+user	2m22.367s
+sys	0m5.050s
+
+real	2m43.170s
+user	2m21.051s
+sys	0m4.899s
+
+real	2m29.389s
+user	2m17.482s
+sys	0m4.198s
+
+
+            #############
+            #  13.06.14 #
+            #############
+
+Local:
+
+real	3m16.416s
+user	3m6.500s
+sys	0m3.913s
+
+real	3m13.099s
+user	3m3.280s
+sys	0m3.882s
+
+real	3m20.541s
+user	3m7.579s
+sys	0m4.194s
+
+
+V-IT
+
+real	2m39.494s
+user	1m57.164s
+sys	0m3.677s
+
+real	2m32.604s
+user	1m57.924s
+sys	0m2.232s
+
+
+            #############
+            #  13.06.14 #
+            #############
+
+V-IT, cdivision=True
+
+real    1m40.878s
+user    1m35.416s
+sys 0m2.097s
+
+
