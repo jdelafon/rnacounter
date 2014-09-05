@@ -2,40 +2,35 @@
 #cython: boundscheck=False
 #cython: cdivision=True
 """
-Count reads on genes and transcripts from a genome-level BAM file and a
-GTF/GFF file describing the exons, such as those provided by Emsembl or GenRep.
-The GTF is assumed to be sorted at least w.r.t. chromosome name,
-and the chromosome identifiers in the GTF must be the same as the BAM references.
-
-If your GTF does not represent exons but custom genomic intervals to simply count
-reads in, provide at least a unique `exon_id` in the attributes as a feature name,
-and the type field (column 2) must be set to 'exon'.
-If not specified, `gene_id`, `transcript_id` and `exon_id` will all get the value
-of `exon_id` and be considered as independant features.
-
 Usage:
-   rnacounter  [-t TYPE] [-n <int>] [-l <int>] [-s] [-m] [-c CHROMS] [-o OUTPUT]
-               [--format FORMAT] [--method METHOD] BAM GTF
+   rnacounter join TAB [TAB2 ...]
+   rnacounter  [...] BAM GTF
+   rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--gtf_ftype FTYPE]
+               [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD] BAM GTF
                [--version] [-h]
 
 Options:
-   -f FORMAT, --format FORMAT       Format of the annotation file: 'gtf' or 'bed' [default: gtf].
-   -t TYPE, --type TYPE             Type of genomic feature to count on: 'genes' or 'transcripts' [default: genes].
-   -n <int>, --normalize <int>      Normalization constant for RPKM. Default: (total number of mapped reads)/10^6.
-   -l <int>, --fraglength <int>     Average fragment length [default: 350].
+   -h, --help                       Displays usage information and exits.
+   -v, --version                    Displays version information and exits.
    -s, --stranded                   Compute sense and antisense reads separately [default: False].
-   -m, --multiple                   Divide count by NH flag for multiply mapping reads [default: False].
+   -n <int>, --normalize <int>      Normalization constant for RPKM. Default: (total number of mapped reads)/10^6.
+   -f <int>, --fraglength <int>     Average fragment length (for transcript length correction) [default: 1].
+   --nh                             Divide count by NH flag for multiply mapping reads [default: False].
+   --noheader                       Remove column names from the output (helps piping) [default: False].
+   --threshold <float>              Do not report counts inferior or equal to the given threshold [default: -1].
+   --gtf_ftype FTYPE                Type of feature in the 3rd column of the GTF to consider [default: exon].
+   --format FORMAT                  Format of the annotation file: 'gtf' or 'bed' [default: gtf].
+   -t TYPE, --type TYPE             Type of genomic features to count reads in:
+                                    'genes', 'transcripts', 'exons' or 'introns' [default: genes].
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout.
-   --method METHOD                  Choose from 'nnls', 'raw', ('likelihood'-soon) [default: raw].
-   -v, --version                    Displays version information and exits.
-   -h, --help                       Displays usage information and exits.
+   -m METHOD, --method METHOD       Choose from 'nnls', 'raw', ('likelihood'-soon) [default: raw].
 """
 
 import pysam
-import os, sys, itertools, copy
+import os, sys, itertools, copy, subprocess
 from operator import attrgetter
-from numpy import asarray, zeros
+from numpy import array, zeros, diag, dot, multiply, sqrt
 from scipy.optimize import nnls
 
 import numpy as np
@@ -43,23 +38,27 @@ cimport numpy as cnp
 DTYPE = np.double               # fix a datatype for the arrays
 ctypedef cnp.double_t DTYPE_t   # assign a corresponding compile-time C type to DTYPE_t
 
-cdef extern from "math.h":
-    double sqrt(double x)
-    double pow(double x,double y)
-
 
 ##########################  GTF parsing  #############################
 
 
-cdef inline double _score(x):
+cdef inline double _score(str x):
     if x == '.': return 0.0
     else: return float(x)
-cdef inline int _strand(x):
-    smap = {'+':1, 1:1, '-':-1, -1:-1, '.':0, 0:0}
+cdef inline int _strand(str x):
+    smap = {'+':1, '1':1, '-':-1, '-1':-1, '.':0, '0':0}
     return smap[x]
 Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 
-def parse_gtf(str line):
+cdef int skip_header(str filename):
+    """Return the number of lines starting with `#`."""
+    cdef int n = 0
+    with open(filename) as f:
+        while f.readline()[0] == '#':
+            n += 1
+    return n
+
+def parse_gtf(str line,str gtf_ftype):
     """Parse one GTF line. Return None if not an 'exon'. Return False if *line* is empty."""
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
     cdef list row
@@ -67,18 +66,19 @@ def parse_gtf(str line):
     row = line.strip().split("\t")
     if len(row) < 9:
         raise ValueError("\"Attributes\" field required in GFF.")
-    if row[2] != 'exon':
+    if row[2] != gtf_ftype:
         return None
     attrs = tuple(x.strip().split() for x in row[8].rstrip(';').split(';'))  # {gene_id: "AAA", ...}
     attrs = dict((x[0],x[1].strip("\"")) for x in attrs)
-    exon_id = attrs.get('exon_id', 'E%d'%Ecounter.next())
-    return Exon(id=exon_id,
+    exon_nr = Ecounter.next()
+    exon_id = attrs.get('exon_id', 'E%d'%exon_nr)
+    return Exon(id=(exon_nr,),
         gene_id=attrs.get('gene_id',exon_id), gene_name=attrs.get('gene_name',exon_id),
-        chrom=row[0], start=int(row[3])-1, end=int(row[4]),
+        chrom=row[0], start=max(int(row[3])-1,0), end=max(int(row[4]),0),
         name=exon_id, score=_score(row[5]), strand=_strand(row[6]),
-        transcripts=[attrs.get('transcript_id',exon_id)], exon_number=int(attrs.get('exon_number',1)))
+        transcripts=set([attrs.get('transcript_id',exon_id)]))
 
-def parse_bed(str line):
+def parse_bed(str line,str gtf_ftype):
     """Parse one BED line. Return False if *line* is empty."""
     cdef list row
     cdef int start,end,strand
@@ -87,14 +87,52 @@ def parse_bed(str line):
     if (not line) or (line[0]=='#') or (line[:5]=='track'): return False
     row = line.strip().split('\t')
     chrom = row[0]; start = int(row[1]); end = int(row[2]); name = row[3]
+    strand = 0
     if len(row) > 4:
         if len(row) > 5: strand = _strand(row[5])
         else: strand = 0
         score = _score(row[4])
     else: score = 0.0
-    exon_id = 'E%d'%Ecounter.next()
-    return Exon(id=exon_id, gene_id=name, gene_name=name, chrom=chrom, start=start, end=end,
-                name=name, score=score, strand=strand, transcripts=[name], exon_number=1)
+    exon_nr = Ecounter.next()
+    #exon_id = 'E%d'%exon_nr
+    return Exon(id=(exon_nr,), gene_id=name, gene_name=name, chrom=chrom, start=start, end=end,
+                name=name, score=score, strand=strand, transcripts=set([name]))
+
+
+##########################  Join tables  ############################
+
+
+def join(tables):
+    """Put 1-sample tables together into a single big table with one column per sample."""
+    tabs = [open(t) for t in tables]
+    out = open("joined_counts_rnacounter.txt","wb")
+    lines = [t.readline().split('\t') for t in tabs]
+    if any(len(L) == 0 for L in lines):
+        sys.stderr.write("One of the tables is empty. Abort.")
+        return 1
+    try: float(lines[0][1]) # header?
+    except:
+        header = [lines[0][0]] + ["Count.%d"%c for c in range(len(tables))] \
+                 + ["RPKM.%d"%c for c in range(len(tables))] + lines[0][3:]
+        out.write('\t'.join(header))
+        lines = [t.readline().split('\t') for t in tabs]
+    while 1:
+        if all(len(L) > 3 for L in lines):
+            gid = lines[0][0]
+            annot = lines[0][3:]
+            cnts = [x[1] for x in lines]
+            rpkm = [x[2] for x in lines]
+            newline = [gid] + cnts + rpkm + annot
+            out.write('\t'.join(newline))
+            lines = [t.readline().split('\t') for t in tabs]
+        elif all(len(L[0]) == 0 for L in lines):  # success
+            break
+        else:  # unequal nb of lines
+            sys.stderr.write("Unequal number of lines. Abort.")
+            return 1
+    out.close()
+    [t.close() for t in tabs]
+    sys.stderr.write("Merged files into \"joined_counts_rnacounter.txt\" .\n")
 
 
 #########################  Global classes  ##########################
@@ -109,12 +147,14 @@ cdef class Counter(object):
 
 cdef class GenomicObject(object):
     cdef public:
-        str id,gene_id,gene_name,chrom,name
+        tuple id
+        str gene_id,gene_name,chrom,name
         int start,end,strand,length,multiplicity
-        double score,count,count_rev,rpk,rpk_rev
-    def __init__(self,str id='',str gene_id='',str gene_name='',str chrom='',int start=0,int end=0,str name='',
-                  double score=0.0,double count=0.0,double count_rev=0.0,double rpk=0.0,double rpk_rev=0.0,
-                  int strand=0,int length=0,int multiplicity=1):
+        double score,count,count_anti,rpk,rpk_anti
+    def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',
+             str chrom='', int start=0, int end=0, str name='',
+             double score=0.0, int strand=0, int length=0, int multiplicity=1,
+             double count=0.0, double count_anti=0.0, double rpk=0.0, double rpk_anti=0.0):
         self.id = id
         self.gene_id = gene_id
         self.gene_name = gene_name
@@ -123,20 +163,18 @@ cdef class GenomicObject(object):
         self.end = end
         self.name = name
         self.score = score
-        self.count = count
-        self.count_rev = count_rev
-        self.rpk = rpk
-        self.rpk_rev = rpk_rev
         self.strand = strand  # 1,-1,0
         self.length = length
         self.multiplicity = multiplicity
+        self.count = count
+        self.count_anti = count_anti
+        self.rpk = rpk
+        self.rpk_anti = rpk_anti
     def __and__(self,other):
         """The intersection of two GenomicObjects"""
         assert self.chrom==other.chrom, "Cannot add features from different chromosomes"
-        selfid = (self.id,) if isinstance(self.id,int) else self.id
-        otherid = (other.id,) if isinstance(other.id,int) else other.id
         return self.__class__(
-            id = selfid + otherid,
+            id = self.id + other.id,
             gene_id = '|'.join(set([self.gene_id, other.gene_id])),
             gene_name = '|'.join(set([self.gene_name, other.gene_name])),
             chrom = self.chrom,
@@ -148,22 +186,19 @@ cdef class GenomicObject(object):
         return "__%s.%s:%d-%d__" % (self.name,self.gene_name,self.start,self.end)
 
 cdef class Exon(GenomicObject):
-    cdef public:
-        int exon_number
-        object transcripts
+    cdef public set transcripts
     cdef:
         double NH,v
         str k
-    def __init__(self,int exon_number=0,object transcripts=set(), **args):
+    def __init__(self,object transcripts=set(), **args):
         GenomicObject.__init__(self, **args)
-        self.exon_number = exon_number
         self.transcripts = transcripts   # list of transcripts it is contained in
         self.length = self.end - self.start
     def __and__(self,other):
         E = GenomicObject.__and__(self,other)
-        E.transcripts = set(self.transcripts) | set(other.transcripts)
+        E.transcripts = self.transcripts | other.transcripts
         return E
-    cpdef increment(self,double x,object alignment,bint multiple=False,bint stranded=False):
+    cpdef increment(self,double x,object alignment,bint multiple,bint stranded):
         if multiple:
             NH = 1.0
             for (k,v) in alignment.tags:
@@ -177,18 +212,22 @@ cdef class Exon(GenomicObject):
             or (alignment.is_reverse is True and self.strand == -1):
                 self.count += x
             else:
-                self.count_rev += x
+                self.count_anti += x
         else:
             self.count += x
 
+cdef class Intron(Exon):
+    def __init__(self, transcripts=set(), **args):
+        Exon.__init__(self, **args)
+
 cdef class Transcript(GenomicObject):
-    cdef public object exons
+    cdef public object exons   # unused
     def __init__(self, exons=[], **args):
         GenomicObject.__init__(self, **args)
         self.exons = exons               # list of exons it contains
 
 cdef class Gene(GenomicObject):
-    cdef public object exons, transcripts
+    cdef public set exons, transcripts
     def __init__(self, exons=set(),transcripts=set(), **args):
         GenomicObject.__init__(self, **args)
         self.exons = exons               # list of exons contained
@@ -198,24 +237,23 @@ cdef class Gene(GenomicObject):
 #####################  Operations on intervals  #####################
 
 
-cdef Exon intersect_exons_list(list feats,bint multiple=False):
+cdef Exon intersect_exons_list(list feats):
     """The intersection of a list *feats* of GenomicObjects.
     If *multiple* is True, permits multiplicity: if the same exon E1 is
     given twice, there will be "E1|E1" parts. Otherwise pieces are unique."""
     cdef Exon x,y,f
-    if multiple is False:
-        feats = list(set(feats))
+    feats = list(set(feats))
     if len(feats) == 1:
         #return copy.deepcopy(feats[0])
         # : unavailable in Cython, or must implement the "pickle protocol" with the __reduce__ method
         f = feats[0]
         return Exon(id=f.id,gene_id=f.gene_id,gene_name=f.gene_name,
             chrom=f.chrom,start=f.start,end=f.end,name=f.name,score=f.score,
-            strand=f.strand,transcripts=f.transcripts,exon_number=f.exon_number)
+            strand=f.strand,transcripts=f.transcripts)
     else:
         return reduce(Exon.__and__, feats)
 
-cdef list cobble(list exons,bint multiple=False):
+cdef list cobble(list exons):
     """Split exons into non-overlapping parts.
     :param multiple: see intersect_exons_list()."""
     cdef list ends, active_exons, cobbled
@@ -242,19 +280,101 @@ cdef list cobble(list exons,bint multiple=False):
         cobbled.append(e)
     return cobbled
 
+cdef list fuse(list intervals):
+    """Fuses overlapping *intervals* - a list [(a,b),(c,d),...]."""
+    cdef list x,y,fused
+    fused = []
+    x = intervals[0]
+    for y in intervals[1:]:
+        if y[0] < x[1]:
+            x[1] = max(x[1], y[1])
+        else:
+            fused.append(x)
+            x = y
+    fused.append(x)
+    return fused
+
+cdef list partition_chrexons(list chrexons):
+    """Partition chrexons in non-overlapping chunks with distinct genes.
+    The problem is that exons are sorted wrt start,end, and so the first
+    exon of a gene can be separate from the second by exons of other genes
+    - from the GTF we don't know how many and how far."""
+    cdef int lastend, lastindex, npart, i, lp
+    cdef list partition, parts
+    cdef dict pinvgenes
+    cdef set lastgeneids, toremove
+    cdef Exon exon
+    cdef str g
+    lastend = chrexons[0].end
+    lastgeneids = set([chrexons[0].gene_id])
+    lastindex = 0
+    partition = []
+    pinvgenes = {}  # map {gene_id: partitions it is found in}
+    npart = 0       # partition index
+    # First cut - where disjoint except if the same gene continues
+    for i,exon in enumerate(chrexons):
+        if (exon.start > lastend) and (exon.gene_id not in lastgeneids):
+            lastend = max(exon.end,lastend)
+            partition.append((lastindex,i))
+            # Record in which parts the gene was found, fuse them later
+            for g in lastgeneids:
+                pinvgenes.setdefault(g,[]).append(npart)
+            npart += 1
+            lastgeneids.clear()
+            lastindex = i
+        else:
+            lastend = max(exon.end,lastend)
+        lastgeneids.add(exon.gene_id)
+    partition.append((lastindex,len(chrexons)))
+    for g in lastgeneids:
+        pinvgenes.setdefault(g,[]).append(npart)
+    # Put together intervals containing parts of the same gene mixed with others - if any
+    mparts = [[p[0],p[len(p)-1]] for p in pinvgenes.itervalues() if len(p)>1]
+    if mparts:
+        mparts = fuse(sorted(mparts))
+        toremove = set()
+        for (a,b) in mparts:
+            partition[b] = (partition[a][0],partition[b][1])
+            toremove |= set(xrange(a,b))
+        partition = [p for i,p in enumerate(partition) if i not in toremove]
+    return partition
+
+cdef complement(str tid,list tpieces):
+    """From a transcript ID and its exon pieces, complement the
+    intervals to get the introns of the transcript."""
+    cdef Exon a,b,intron
+    cdef list introns
+    cdef int k,i
+    cdef tuple intron_id
+    cdef str intron_name
+    introns = []
+    k = 0
+    for i in range(len(tpieces)-1):
+        a = tpieces[i]
+        b = tpieces[i+1]
+        if a.end == b.start: continue
+        k += 1
+        intron_id = (-1,)+a.id
+        intron_name = "%s-i%d"%(tid,k)
+        intron = Intron(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
+            start=a.end, end=b.start, name=intron_name, strand=a.strand, transcripts=set([tid]))
+        introns.append(intron)
+    return introns
+
 
 #############################  Counting  ############################
 
 
 cdef inline double toRPK(double count,double length,double norm_cst):
     return 1000.0 * count / (length * norm_cst)
+
 cdef inline double fromRPK(double rpk,double length,double norm_cst):
     return length * norm_cst * rpk / 1000.0
 
-cdef inline double toSQRPK(double count,double length,double norm_cst):
-    return 1000.0 * sqrt(count) / (length * norm_cst)
-cdef inline double fromSQRPK(double sqrpk,double length,double norm_cst):
-    return pow(length * norm_cst * sqrpk / 1000.0 , 2.0)
+cdef inline double correct_fraglen_bias(double rpk,int length, int fraglen):
+    if fraglen == 1: return rpk
+    newlength = <float> max(length-fraglen+1, 1)
+    return rpk * length / newlength
 
 
 cdef int count_reads(list exons,object ckreads,bint multiple,bint stranded) except -1:
@@ -341,9 +461,14 @@ cdef inline bint is_in(object feat_class,Exon x,str feat_id):
         return feat_id in x.transcripts
     elif feat_class == Gene:
         return feat_id in x.gene_id.split('|')
+    else:
+        return x.name in feat_id.split('|') or x.name == feat_id
+            # x is an exon: x == itself or x contains the piece
+            # x is a piece: p == feat_id
 
 
-cdef list estimate_expression_NNLS(object feat_class,list pieces,list ids,list exons,double norm_cst):
+cdef list estimate_expression_NNLS(object feat_class,list pieces,list ids,list exons,double norm_cst,
+                                   bint stranded,bint weighted):
     """Infer gene/transcript expression from exons RPK. Takes Exon instances *pieces*
     and returns for each feature ID in *ids* an instance of *feat_class* with the
     appropriate count and RPK attributes set.
@@ -352,10 +477,10 @@ cdef list estimate_expression_NNLS(object feat_class,list pieces,list ids,list e
     Lines are exons, columns are transcripts,
     so that A[i,j]!=0 means 'transcript Tj contains exon Ei'."""
     cdef int n,m,flen,i,j
-    cdef double rnorm, fcount, frpk
+    cdef double rnorm, fcount, frpk, fcount_anti, frpk_anti
     cdef str f
-    cdef cnp.ndarray[DTYPE_t, ndim=2] A
-    cdef cnp.ndarray[DTYPE_t, ndim=1] E, T
+    cdef cnp.ndarray[DTYPE_t, ndim=2] A, W
+    cdef cnp.ndarray[DTYPE_t, ndim=1] E, T, w
     cdef Exon p
     cdef list exs, feats
     n = len(pieces)
@@ -363,184 +488,272 @@ cdef list estimate_expression_NNLS(object feat_class,list pieces,list ids,list e
     A = zeros((n,m))
     for i,p in enumerate(pieces):
         for j,f in enumerate(ids):
-            A[i,j] = 1. if is_in(feat_class,p,f) else 0.
+            if is_in(feat_class,p,f): A[i,j] = 1.
     #--- Build the exons scores vector
-    E = asarray([p.rpk for p in pieces])
-    #E = asarray([toSQRPK(p.count,p.length,norm_cst) for p in pieces])
+    E = array([p.rpk for p in pieces])
+    if weighted:
+        w = sqrt(array([p.length for p in pieces]))
+        W = diag(w)
+        A = dot(W,A)
+        E = multiply(E, w)
     #--- Solve for RPK
     T,rnorm = nnls(A,E)
+    #-- Same for antisense if stranded protocol
+    if stranded:
+        E_anti = array([p.rpk_anti for p in pieces])
+        T_anti,rnorm_anti = nnls(A,E_anti)
     #--- Store result in *feat_class* objects
     feats = []
+    frpk_anti = fcount_anti = 0.0
     for i,f in enumerate(ids):
         exs = sorted([e for e in exons if is_in(feat_class,e,f)], key=attrgetter('start','end'))
         flen = sum([p.length for p in pieces if is_in(feat_class,p,f)])
         frpk = T[i]
         fcount = fromRPK(T[i],flen,norm_cst)
-        #fSQrpk = T[i]
-        #fcount = fromSQRPK(T[i],flen,norm_cst)
-        #frpk = toRPK(fcount,flen,norm_cst)
-        feats.append(feat_class(name=f, length=flen, rpk=frpk, count=fcount,
+        if stranded:
+            frpk_anti = T_anti[i]
+            fcount_anti = fromRPK(T_anti[i],flen,norm_cst)
+        feats.append(feat_class(name=f, length=flen,
+                rpk=frpk, rpk_anti=frpk_anti, count=fcount, count_anti=fcount_anti,
                 chrom=exs[0].chrom, start=exs[0].start, end=exs[len(exs)-1].end,
-                gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
+                gene_id=exs[0].gene_id, gene_name=exs[0].gene_name, strand=exs[0].strand))
     return feats
 
 
-cdef list estimate_expression_raw(object feat_class,list pieces,list ids,list exons,double norm_cst):
+cdef list estimate_expression_raw(object feat_class,list pieces,list ids,list exons,double norm_cst,bint stranded):
     """For each feature ID in *ids*, just sum the score of its components as one
     commonly does for genes from exon counts. Discard ambiguous pieces that are part of
     more than one gene."""
     cdef int flen,i,j
-    cdef double fcount, frpk
+    cdef double fcount, frpk, fcount_anti, frpk_anti
     cdef str f
     cdef Exon p
     cdef list inner, feats
     feats = []
+    frpk_anti = fcount_anti = 0.0
     for i,f in enumerate(ids):
         exs = sorted([e for e in exons if is_in(feat_class,e,f)], key=attrgetter('start','end'))
         inner = [p for p in pieces if (len(p.gene_id.split('|'))==1 and is_in(feat_class,p,f))]
-        flen = sum([p.length for p in inner])
-        fcount = sum([p.count for p in inner])
-        frpk = toRPK(fcount,flen,norm_cst)
-        feats.append(feat_class(name=f, length=flen, rpk=frpk, count=fcount,
+        if len(inner)==0:
+            flen = 0
+            fcount = frpk = 0.0
+        else:
+            flen = sum([p.length for p in inner])
+            fcount = sum([p.count for p in inner])
+            frpk = toRPK(fcount,flen,norm_cst)
+            if stranded:
+                fcount_anti = sum([p.count_anti for p in inner])
+                frpk_anti = toRPK(fcount_anti,flen,norm_cst)
+        feats.append(feat_class(name=f, length=flen,
+                rpk=frpk, rpk_anti=frpk_anti, count=fcount, count_anti=fcount_anti,
                 chrom=exs[0].chrom, start=exs[0].start, end=exs[len(exs)-1].end,
-                gene_id=exs[0].gene_id, gene_name=exs[0].gene_name))
+                gene_id=exs[0].gene_id, gene_name=exs[0].gene_name, strand=exs[0].strand))
     return feats
 
 
 ###########################  Main script  ###########################
 
 
-cdef list partition_chrexons(list chrexons):
-    """Partition chrexons in non-overlapping chunks with distinct genes.
-    The problem is that exons are sorted wrt start,end, and so the first
-    exon of a gene can be separate from the second by exons of other genes
-    - from the GTF we don't know how many and how far."""
-    cdef int lastend, lastindex, npart, i, lp
-    cdef list partition, parts
-    cdef dict pinvgenes
-    cdef set lastgeneids, toremove
-    cdef Exon exon
-    cdef str g
-    # Cut where disjoint except if the same gene continues
-    lastend = chrexons[0].end
-    lastgeneids = set(chrexons[0].gene_id)
-    lastindex = 0
-    partition = []
-    pinvgenes = {}  # map {gene_id: partitions it is in}
-    npart = 0       # number of partitions
-    for i,exon in enumerate(chrexons):
-        if (exon.start > lastend) and (exon.gene_id not in lastgeneids):
-            lastend = max(exon.end,lastend)
-            partition.append((lastindex,i))
-            for g in lastgeneids:
-                pinvgenes.setdefault(g,[]).append(npart)
-            npart += 1
-            lastgeneids.clear()
-            lastindex = i
+cdef inline str simplify(str name):
+    """Removes duplicates in names of the form 'name1|name2', and sorts elements."""
+    return '|'.join(sorted(set(name.split('|'))))
+
+cdef set filter_transcripts(dict t2p,int readlength):
+    """*t2p* is a map {transcriptID: [exon pieces]}.
+    Find transcripts that differ from others by less than a few exons of less than
+    a read length. Return the set of IDs of redundant transcripts."""
+    cdef set seen, toremove
+    cdef str t
+    cdef list tpieces
+    cdef Exon tp
+    cdef tuple filtered_ids
+    seen = set()  # transcript structures, as tuples of exon ids
+    toremove = set() # too close transcripts
+    for t,tpieces in t2p.iteritems():
+        filtered_ids = tuple([tp.id for tp in tpieces if tp.length < readlength])
+        if filtered_ids in seen:
+            toremove.add(t)
         else:
-            lastend = max(exon.end,lastend)
-        lastgeneids.add(exon.gene_id)
-    partition.append((lastindex,len(chrexons)))
-    for g in lastgeneids:
-        pinvgenes.setdefault(g,[]).append(npart)
-    npart += 1
-    # Merge intervals containing parts of the same gene mixed with others
-    toremove = set()
-    for g,parts in pinvgenes.iteritems():
-        lp = len(parts)
-        if lp>1:
-            a = parts[0]; b = parts[lp-1]
-            partition[b] = (partition[a][0], partition[b][1])
-            toremove |= set(xrange(a,b))
-    partition = [p for i,p in enumerate(partition) if i not in toremove]
-    return partition
+            seen.add(filtered_ids)
+    return toremove
 
 
 def process_chunk(list ckexons,object sam,str chrom,dict options):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
-    cdef int method, lastend
-    cdef Exon exon0, g, p
-    cdef list pieces, exons, gene_ids, genes, transcripts, el
-    cdef tuple es
-    cdef dict t2e, e2t, tx_replace
-    cdef set filtered
-    cdef str t
+    cdef int method, lastend, fraglength, readlength, i
+    cdef Exon exon0, gr, p
+    cdef Gene gene
+    cdef Transcript trans
+    cdef list exons, exons2, introns, introns2, genes, transcripts
+    cdef list exon_names, transcript_ids, gene_ids
+    cdef list pieces, tpieces, types
+    cdef dict t2p, methods
+    cdef set toremove
+    cdef str t, tid
+    cdef bint stranded, weighted
+    cdef double norm_cst, threshold
+
+    norm_cst = options['normalize']
+    stranded = options['stranded']
+    output = options['output']
+    types = options['type']
+    methods = options['method']
+    threshold = options['threshold']
+    fraglength = options['fraglength']
+    readlength = options["readlength"]
+    weighted = True  # WNNLS switch !
 
     #--- Regroup occurrences of the same Exon from a different transcript
     exons = []
     for key,group in itertools.groupby(ckexons, attrgetter('id')):
         # ckexons are sorted by id because chrexons were sorted by chrom,start,end
         exon0 = group.next()
-        for g in group:
-            exon0.transcripts.append(g.transcripts[0])
+        for gr in group:
+            exon0.transcripts.add(gr.transcripts.pop())
         exons.append(exon0)
-    gene_ids = list(set(e.gene_id for e in exons))
+    gene_ids = sorted(set(e.gene_id for e in exons))
+    exon_names = sorted(set(e.name for e in exons))
 
     #--- Cobble all these intervals
-    pieces = cobble(exons)
+    pieces = cobble(exons)  # sorted
 
-    #--- Filter out too similar transcripts, e.g. made of the same exons up to 100bp.
-    if 1 in options['type']:  # transcripts
-        transcript_ids = set()  # full list of remaining transcripts
-        t2e = {}                               # map {transcript: [pieces IDs]}
-        for p in pieces:
-            if p.length < 100: continue        # filter out cobbled pieces of less that read length
-            for t in p.transcripts:
-                t2e.setdefault(t,[]).append(p.id)
-        e2t = {}
-        for t,el in t2e.iteritems():
-            es = tuple(sorted(el))             # combination of pieces indices
-            e2t.setdefault(es,[]).append(t)    # {(pieces IDs combination): [transcripts with same struct]}
-        # Replace too similar transcripts by the first of the list, arbitrarily
-        tx_replace = dict((badt,tlist[0]) for tlist in e2t.values() for badt in tlist[1:] if len(tlist)>1)
-        for p in pieces:
-            filtered = set(tx_replace.get(t,t) for t in p.transcripts)
-            transcript_ids |= filtered
-            p.transcripts = list(filtered)
-        transcript_ids = list(transcript_ids)
+    #--- Build transcript to pieces mapping
+    t2p = {}
+    for p in pieces:
+        for t in p.transcripts:
+            t2p.setdefault(t,[]).append(p)
 
-    #--- Get all reads from this chunk - iterator
+    #--- Filter out too similar transcripts
+    if 1 in types or 3 in types:
+        toremove = filter_transcripts(t2p, readlength)
+        for t in toremove:
+            t2p.pop(t)
+        for p in pieces:
+            p.transcripts = set(t for t in p.transcripts if t not in toremove)
+    transcript_ids = sorted(t2p.keys())
+
+    #--- Count reads in each piece
     lastend = max(e.end for e in exons)
     ckreads = sam.fetch(chrom, exons[0].start, lastend)
+    count_reads(pieces,ckreads,options['nh'],stranded)
 
-    #--- Count reads in each piece -- from rnacounter.cc
-    count_reads(pieces,ckreads,options['multiple'],options['stranded'])
+    #--- Same for introns, if selected
+    intron_pieces = []
+    if 3 in types:
+        introns = []
+        for tid,tpieces in sorted(t2p.items()):
+            introns.extend(complement(tid,tpieces))  # tpieces is already sorted
+        if introns:
+            intron_exon_pieces = cobble(introns+exons)
+            intron_pieces = [ip for ip in intron_exon_pieces \
+                             if ip.length > readlength \
+                             and not any([n in exon_names for n in ip.name.split('|')])]
+            if intron_pieces:
+                lastend = max([intron.end for intron in introns])
+                ckreads = sam.fetch(chrom, intron_pieces[0].start, lastend)
+                count_reads(intron_pieces,ckreads,options['nh'],stranded)
+        for i,ip in enumerate(intron_pieces):
+            ip.name = "%dI_%s" % (i+1, simplify(ip.gene_name))
 
     #--- Calculate RPK
-    for p in pieces:
-        p.rpk = toRPK(p.count,p.length,options['normalize'])
+    for p in itertools.chain(pieces,intron_pieces):
+        p.rpk = toRPK(p.count,p.length,norm_cst)
+    if stranded:
+        for p in itertools.chain(pieces,intron_pieces):
+            p.rpk_anti = toRPK(p.count_anti,p.length,norm_cst)
 
     #--- Infer gene/transcript counts
-    genes = []; transcripts = []
+    for p in pieces:
+        p.name = simplify(p.name)  # remove duplicates in names
+    genes=[]; transcripts=[]; exons2=[]; introns2=[]
     # Genes - 0
-    if 0 in options['type']:
-        method = options['method'][0]
-        if method == 0:    # raw
-            genes = estimate_expression_raw(Gene,pieces,gene_ids,exons,options['normalize'])
-        elif method == 1:  # nnls
-            genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,options['normalize'])
+    if 0 in types:
+        method = methods.get(0,0)
+        if method == 0:
+            genes = estimate_expression_raw(Gene,pieces,gene_ids,exons,norm_cst,stranded)
+        elif method == 1:
+            genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,norm_cst,stranded,weighted)
+        for gene in genes:
+            gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
     # Transcripts - 1
-    if 1 in options['type']:
-        method = options['method'][1]
-        if method == 1:    # nnls
-            transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,options['normalize'])
-        elif method == 0:  # raw
-            transcripts = estimate_expression_raw(Transcript,pieces,transcript_ids,exons,options['normalize'])
+    if 1 in types:
+        method = methods.get(0,1)
+        if method == 1:
+            transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+        elif method == 0:
+            transcripts = estimate_expression_raw(Transcript,pieces,transcript_ids,exons,norm_cst,stranded)
+        for trans in transcripts:
+            trans.rpk = correct_fraglen_bias(trans.rpk, trans.length, fraglength)
+    # Exons - 2
+    if 2 in types:
+        method = methods.get(2,0)
+        if method == 0:
+            exons2 = pieces[:]  # !
+        elif method == 1:
+            exon_ids = [e.name for e in exons]
+            exons2 = estimate_expression_NNLS(Exon,pieces,exon_ids,exons,norm_cst,stranded,weighted)
+    # Introns - 3
+    if 3 in types and intron_pieces:
+        method = methods.get(3,0)
+        if method == 0:
+            introns2 = intron_pieces[:]   # !
+        elif method == 1:
+            intron_ids = [e.name for e in introns]
+            introns2 = estimate_expression_NNLS(Exon,intron_pieces,intron_ids,introns,norm_cst,stranded,weighted)
 
-    #--- Print output
-    for f in itertools.chain(genes,transcripts):
-        towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
-                                    f.strand,f.gene_name,f.__class__.__name__.lower()]]
-        options['output'].write('\t'.join(towrite)+'\n')
+    print_output(output, genes,transcripts,exons2,introns2, threshold,stranded)
+
+
+def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
+    igenes = itertools.ifilter(lambda x:x.count > threshold, genes)
+    itranscripts = itertools.ifilter(lambda x:x.count > threshold, transcripts)
+    iexons = itertools.ifilter(lambda x:x.count > threshold, exons)
+    iintrons = itertools.ifilter(lambda x:x.count > threshold, introns)
+    if stranded:
+        for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
+            towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
+                                        f.strand,f.gene_name,f.__class__.__name__.lower(),'sense']]
+            output.write('\t'.join(towrite)+'\n')
+            towrite = [str(x) for x in [f.name,f.count_anti,f.rpk_anti,f.chrom,f.start,f.end,
+                                        f.strand,f.gene_name,f.__class__.__name__.lower(),'antisense']]
+            output.write('\t'.join(towrite)+'\n')
+    else:
+        for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
+            towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
+                                        f.strand,f.gene_name,f.__class__.__name__.lower()]]
+            output.write('\t'.join(towrite)+'\n')
 
 
 def rnacounter_main(bamname, annotname, options):
+    # Index BAM if necessary
+    if not os.path.exists(bamname+'.bai'):
+        sys.stderr.write("BAM index not found. Indexing...")
+        subprocess.check_call("samtools index %s" % bamname, shell=True)
+        sys.stderr.write("...done.\n")
+
+    # Open BAM. Get read length
     sam = pysam.Samfile(bamname, "rb")
+    options["readlength"] = int(sam.next().rlen)
+    sam.close()
+    sam = pysam.Samfile(bamname, "rb")
+
+    # Open GTF. Skip header lines
+    nhead = skip_header(annotname)
     annot = open(annotname, "r")
+    for _ in range(nhead): annot.readline()
 
     if options['output'] is None: options['output'] = sys.stdout
     else: options['output'] = open(options['output'], "wb")
+    if options['noheader'] is False:
+        header = ['ID','Count','RPKM','Chrom','Start','End','Strand','GeneName','Type']
+        if options['stranded']: header += ['Sense']
+        options['output'].write('\t'.join(header)+'\n')
+
+    if options['format'] == 'gtf':
+        parse = parse_gtf
+    elif options['format'] == 'bed':
+        parse = parse_bed
 
     # Cross 'chromosomes' option with available BAM headers
     if len(options['chromosomes']) > 0:
@@ -554,18 +767,14 @@ def rnacounter_main(bamname, annotname, options):
     else:
         options['normalize'] = float(options['normalize'])
 
-    if options['format'] == 'gtf':
-        parse = parse_gtf
-    elif options['format'] == 'bed':
-        parse = parse_bed
-
     # Initialize
+    gtf_ftype = options['gtf_ftype']
     chrom = ''
     while chrom not in chromosomes:
         exon = None
         while exon is None:
             row = annot.readline().strip()
-            exon = parse(row)  # None if not an exon, False if EOF
+            exon = parse(row, gtf_ftype)  # None if not an exon, False if EOF
         if not row: break
         chrom = exon.chrom
     if chrom == '':
@@ -582,10 +791,10 @@ def rnacounter_main(bamname, annotname, options):
             exon = None
             while exon is None:
                 row = annot.readline().strip()
-                exon = parse(row)  # None if not an exon, False if EOF
+                exon = parse(row, gtf_ftype)  # None if not an exon, False if EOF
             if not row: break
             chrom = exon.chrom
-        if len(chrexons) > 0:
+        if chrexons:
             chrexons.sort(key=attrgetter('start','end'))
             partition = partition_chrexons(chrexons)
             # Process chunks
@@ -619,20 +828,29 @@ def parse_args(args):
     # Type: one can actually give both as "-t genes,transcripts" but they
     # will be mixed in the output stream. Split the output using the last field ("Type").
     args['--type'] = [x.lower() for x in args['--type'].split(',')]
-    assert all(x in ["genes","transcripts"] for x in args['--type']), \
-        "TYPE must be one of 'genes' or 'transcripts'"
-    type_map = {'genes':0, 'transcripts':1, 'exons':2}  # avoid comparing strings later
+    assert all(x in ["genes","transcripts","exons","introns"] for x in args['--type']), \
+        "TYPE must be one of 'genes', 'transcripts', 'exons' or 'introns'."
+    type_map = {'genes':0, 'transcripts':1, 'exons':2, 'introns':3}  # avoid comparing strings later
     args['--type'] = [type_map[x] for x in args['--type']]
 
     # Same for methods. If given as a list, the length must be that of `--type`,
     # the method at index i will be applied to feature type at index i.
     args['--method'] = [x.lower() for x in args['--method'].split(',')]
-    assert len(args['--method']) == len(args['--type'])
-    assert all(x in ["raw","nnls","likelihood"] for x in args['--method']), \
-        "METHOD must be one of 'raw', 'nnls' or 'likelihood'."
-    method_map = {'raw':0, 'nnls':1, 'likelihood':2}  # avoid comparing strings later
+    if len(args['--method']) > 1:  # multiple methods given
+        assert len(args['--method']) == len(args['--type']), \
+            "TYPE and METHOD arguments must have the same number of elements."
+    elif len(args['--type']) > 1:  # apply same method to all types
+        args['--method'] = args['--method'] * len(args['--type'])
+    assert all(x in ["raw","nnls"] for x in args['--method']), \
+        "METHOD must be one of 'raw' or 'nnls'."
+    method_map = {'raw':0, 'nnls':1}  # avoid comparing strings later
     args['--method'] = [method_map[x] for x in args['--method']]
     args['--method'] = dict(zip(args['--type'],args['--method']))
+
+    try: args['--threshold'] = float(args['--threshold'])
+    except ValueError: raise ValueError("--threshold must be numeric.")
+    try: args['--fraglength'] = int(args['--fraglength'])
+    except ValueError: raise ValueError("--fraglength must be an integer.")
 
     options = dict((k.lstrip('-').lower(), v) for k,v in args.iteritems())
     return bamname, annotname, options
