@@ -5,9 +5,10 @@
 Usage:
    rnacounter join TAB [TAB2 ...]
    rnacounter  [...] BAM GTF
-   rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--gtf_ftype FTYPE]
-               [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD] BAM GTF
-               [--version] [-h]
+   rnacounter  [--version] [-h]
+               [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
+               [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]
+               BAM GTF
 
 Options:
    -h, --help                       Displays usage information and exits.
@@ -17,6 +18,7 @@ Options:
    -f <int>, --fraglength <int>     Average fragment length (for transcript length correction) [default: 1].
    --nh                             Divide count by NH flag for multiply mapping reads [default: False].
    --noheader                       Remove column names from the output (helps piping) [default: False].
+   --exon_cutoff <int>              Merge transcripts differing by exons of less than that many nt. Default: read length.
    --threshold <float>              Do not report counts inferior or equal to the given threshold [default: -1].
    --gtf_ftype FTYPE                Type of feature in the 3rd column of the GTF to consider [default: exon].
    --format FORMAT                  Format of the annotation file: 'gtf' or 'bed' [default: gtf].
@@ -29,7 +31,7 @@ Options:
 
 import pysam
 import os, sys, itertools, copy, subprocess
-from operator import attrgetter
+from operator import attrgetter, itemgetter
 from numpy import array, zeros, diag, dot, multiply, sqrt
 from scipy.optimize import nnls
 
@@ -85,11 +87,13 @@ def parse_bed(str line,str gtf_ftype):
     cdef str name
     cdef double score
     if (not line) or (line[0]=='#') or (line[:5]=='track'): return False
-    row = line.strip().split('\t')
+    row = line.strip().split()
+    lrow = len(row)
+    assert lrow >=4, "Input BED format requires at least 4 fields: %s" % line
     chrom = row[0]; start = int(row[1]); end = int(row[2]); name = row[3]
     strand = 0
-    if len(row) > 4:
-        if len(row) > 5: strand = _strand(row[5])
+    if lrow > 4:
+        if lrow > 5: strand = _strand(row[5])
         else: strand = 0
         score = _score(row[4])
     else: score = 0.0
@@ -112,13 +116,14 @@ def join(tables):
         return 1
     try: float(lines[0][1]) # header?
     except:
-        header = [lines[0][0]] + ["Count.%d"%c for c in range(len(tables))] \
-                 + ["RPKM.%d"%c for c in range(len(tables))] + lines[0][3:]
+        header = [lines[0][0]] + ["Count.%d"%(c+1) for c in range(len(tables))] \
+                 + ["RPKM.%d"%(c+1) for c in range(len(tables))] + lines[0][3:]
         out.write('\t'.join(header))
         lines = [t.readline().split('\t') for t in tabs]
     while 1:
         if all(len(L) > 3 for L in lines):
             gid = lines[0][0]
+            for L in lines: assert L[0]==gid, "Line identifiers are not the same."
             annot = lines[0][3:]
             cnts = [x[1] for x in lines]
             rpkm = [x[2] for x in lines]
@@ -148,11 +153,11 @@ cdef class Counter(object):
 cdef class GenomicObject(object):
     cdef public:
         tuple id
-        str gene_id,gene_name,chrom,name
+        str gene_id,gene_name,chrom,name,ftype,synonyms
         int start,end,strand,length,multiplicity
         double score,count,count_anti,rpk,rpk_anti
     def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',
-             str chrom='', int start=0, int end=0, str name='',
+             str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='',
              double score=0.0, int strand=0, int length=0, int multiplicity=1,
              double count=0.0, double count_anti=0.0, double rpk=0.0, double rpk_anti=0.0):
         self.id = id
@@ -162,6 +167,7 @@ cdef class GenomicObject(object):
         self.start = start
         self.end = end
         self.name = name
+        self.ftype = self.__class__.__name__
         self.score = score
         self.strand = strand  # 1,-1,0
         self.length = length
@@ -170,6 +176,7 @@ cdef class GenomicObject(object):
         self.count_anti = count_anti
         self.rpk = rpk
         self.rpk_anti = rpk_anti
+        self.synonyms = synonyms
     def __and__(self,other):
         """The intersection of two GenomicObjects"""
         assert self.chrom==other.chrom, "Cannot add features from different chromosomes"
@@ -215,10 +222,6 @@ cdef class Exon(GenomicObject):
                 self.count_anti += x
         else:
             self.count += x
-
-cdef class Intron(Exon):
-    def __init__(self, transcripts=set(), **args):
-        Exon.__init__(self, **args)
 
 cdef class Transcript(GenomicObject):
     cdef public object exons   # unused
@@ -339,7 +342,7 @@ cdef list partition_chrexons(list chrexons):
         partition = [p for i,p in enumerate(partition) if i not in toremove]
     return partition
 
-cdef complement(str tid,list tpieces):
+cdef list complement(str tid,list tpieces):
     """From a transcript ID and its exon pieces, complement the
     intervals to get the introns of the transcript."""
     cdef Exon a,b,intron
@@ -356,7 +359,7 @@ cdef complement(str tid,list tpieces):
         k += 1
         intron_id = (-1,)+a.id
         intron_name = "%s-i%d"%(tid,k)
-        intron = Intron(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
+        intron = Exon(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
             start=a.end, end=b.start, name=intron_name, strand=a.strand, transcripts=set([tid]))
         introns.append(intron)
     return introns
@@ -371,7 +374,7 @@ cdef inline double toRPK(double count,double length,double norm_cst):
 cdef inline double fromRPK(double rpk,double length,double norm_cst):
     return length * norm_cst * rpk / 1000.0
 
-cdef inline double correct_fraglen_bias(double rpk,int length, int fraglen):
+cdef inline double correct_fraglen_bias(double rpk,int length,int fraglen):
     if fraglen == 1: return rpk
     newlength = <float> max(length-fraglen+1, 1)
     return rpk * length / newlength
@@ -437,6 +440,7 @@ cdef int count_reads(list exons,object ckreads,bint multiple,bint stranded) exce
                 ali_pos += shift   # got to start of next op in prevision for next round
             elif op == 1:  # BAM_CINS
                 ali_len += shift;
+        # If read entirely contained in exon, ali_len==shift and we do a single increment
         E2.increment(float(ali_len)/float(read_len), alignment, multiple,stranded)
     return 0
 
@@ -558,38 +562,40 @@ cdef inline str simplify(str name):
     """Removes duplicates in names of the form 'name1|name2', and sorts elements."""
     return '|'.join(sorted(set(name.split('|'))))
 
-cdef set filter_transcripts(dict t2p,int readlength):
+cdef dict filter_transcripts(dict t2p,int exon_cutoff):
     """*t2p* is a map {transcriptID: [exon pieces]}.
-    Find transcripts that differ from others by less than a few exons of less than
-    a read length. Return the set of IDs of redundant transcripts."""
-    cdef set seen, toremove
-    cdef str t
-    cdef list tpieces
-    cdef Exon tp
-    cdef tuple filtered_ids
-    seen = set()  # transcript structures, as tuples of exon ids
-    toremove = set() # too close transcripts
-    for t,tpieces in t2p.iteritems():
-        filtered_ids = tuple([tp.id for tp in tpieces if tp.length < readlength])
-        if filtered_ids in seen:
-            toremove.add(t)
-        else:
-            seen.add(filtered_ids)
-    return toremove
+    Find transcripts that differ from others by exon parts of less than
+    one read length."""
+    cdef dict seen, replace
+    cdef str t, main
+    cdef list texons, tlist
+    cdef Exon te
+    cdef tuple filtered_ids, f
+    seen = {}  # transcript structures, as tuples of exon ids
+    replace = {} # too close transcripts
+    for t,texons in sorted(t2p.iteritems(), key=itemgetter(0)):
+        filtered_ids = tuple([te.id for te in texons if te.length > exon_cutoff])
+        seen.setdefault(filtered_ids, []).append(t)
+    for f,tlist in seen.iteritems():
+        main = tlist[0]
+        replace[main] = main
+        for t in tlist[1:]:
+            t2p.pop(t)
+            replace[t] = main
+    return replace
 
 
 def process_chunk(list ckexons,object sam,str chrom,dict options):
     """Distribute counts across transcripts and genes of a chunk *ckexons*
     of non-overlapping exons."""
-    cdef int method, lastend, fraglength, readlength, i
-    cdef Exon exon0, gr, p
+    cdef int method, lastend, fraglength, exon_cutoff, i
+    cdef Exon exon0, gr, p, e
     cdef Gene gene
     cdef Transcript trans
     cdef list exons, exons2, introns, introns2, genes, transcripts
     cdef list exon_names, transcript_ids, gene_ids
     cdef list pieces, tpieces, types
     cdef dict t2p, methods
-    cdef set toremove
     cdef str t, tid
     cdef bint stranded, weighted
     cdef double norm_cst, threshold
@@ -601,7 +607,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     methods = options['method']
     threshold = options['threshold']
     fraglength = options['fraglength']
-    readlength = options["readlength"]
+    exon_cutoff = options['exon_cutoff']
     weighted = True  # WNNLS switch !
 
     #--- Regroup occurrences of the same Exon from a different transcript
@@ -618,20 +624,19 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     #--- Cobble all these intervals
     pieces = cobble(exons)  # sorted
 
-    #--- Build transcript to pieces mapping
+    #--- Filter out too similar transcripts
     t2p = {}
+    synonyms = {}
     for p in pieces:
         for t in p.transcripts:
             t2p.setdefault(t,[]).append(p)
-
-    #--- Filter out too similar transcripts
     if 1 in types or 3 in types:
-        toremove = filter_transcripts(t2p, readlength)
-        for t in toremove:
-            t2p.pop(t)
-        for p in pieces:
-            p.transcripts = set(t for t in p.transcripts if t not in toremove)
-    transcript_ids = sorted(t2p.keys())
+        replace = filter_transcripts(t2p, exon_cutoff)
+        for p in pieces + exons:
+            p.transcripts = set(replace[t] for t in p.transcripts)
+        for t,main in replace.iteritems():
+            if t!=main: synonyms.setdefault(main, []).append(t)
+    transcript_ids = sorted(t2p.keys())  # sort to have the same order in all outputs from same gtf
 
     #--- Count reads in each piece
     lastend = max(e.end for e in exons)
@@ -643,18 +648,20 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     if 3 in types:
         introns = []
         for tid,tpieces in sorted(t2p.items()):
-            introns.extend(complement(tid,tpieces))  # tpieces is already sorted
+            tpieces.sort(key=attrgetter('start','end'))
+            introns.extend(complement(tid,tpieces))
         if introns:
             intron_exon_pieces = cobble(introns+exons)
-            intron_pieces = [ip for ip in intron_exon_pieces \
-                             if ip.length > readlength \
-                             and not any([n in exon_names for n in ip.name.split('|')])]
+            intron_pieces = [ip for ip in intron_exon_pieces if \
+                             # ip.length > exon_cutoff and \
+                             not any([n in exon_names for n in ip.name.split('|')])]
             if intron_pieces:
                 lastend = max([intron.end for intron in introns])
                 ckreads = sam.fetch(chrom, intron_pieces[0].start, lastend)
                 count_reads(intron_pieces,ckreads,options['nh'],stranded)
         for i,ip in enumerate(intron_pieces):
             ip.name = "%dI_%s" % (i+1, simplify(ip.gene_name))
+            ip.ftype = "Intron"
 
     #--- Calculate RPK
     for p in itertools.chain(pieces,intron_pieces):
@@ -685,13 +692,14 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
             transcripts = estimate_expression_raw(Transcript,pieces,transcript_ids,exons,norm_cst,stranded)
         for trans in transcripts:
             trans.rpk = correct_fraglen_bias(trans.rpk, trans.length, fraglength)
+            trans.synonyms = ','.join(synonyms.get(trans.name, ['.']))
     # Exons - 2
     if 2 in types:
         method = methods.get(2,0)
         if method == 0:
             exons2 = pieces[:]  # !
         elif method == 1:
-            exon_ids = [e.name for e in exons]
+            exon_ids = [p.name for p in exons]
             exons2 = estimate_expression_NNLS(Exon,pieces,exon_ids,exons,norm_cst,stranded,weighted)
     # Introns - 3
     if 3 in types and intron_pieces:
@@ -699,7 +707,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
         if method == 0:
             introns2 = intron_pieces[:]   # !
         elif method == 1:
-            intron_ids = [e.name for e in introns]
+            intron_ids = [p.name for p in introns]
             introns2 = estimate_expression_NNLS(Exon,intron_pieces,intron_ids,introns,norm_cst,stranded,weighted)
 
     print_output(output, genes,transcripts,exons2,introns2, threshold,stranded)
@@ -713,15 +721,15 @@ def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
     if stranded:
         for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.__class__.__name__.lower(),'sense']]
+                                        f.strand,f.gene_name,f.ftype,'sense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
             towrite = [str(x) for x in [f.name,f.count_anti,f.rpk_anti,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.__class__.__name__.lower(),'antisense']]
+                                        f.strand,f.gene_name,f.ftype,'antisense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
     else:
         for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.__class__.__name__.lower()]]
+                                        f.strand,f.gene_name,f.ftype,'.',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
 
 
@@ -734,7 +742,8 @@ def rnacounter_main(bamname, annotname, options):
 
     # Open BAM. Get read length
     sam = pysam.Samfile(bamname, "rb")
-    options["readlength"] = int(sam.next().rlen)
+    if options['exon_cutoff'] is None:
+        options["exon_cutoff"] = int(sam.next().rlen)
     sam.close()
     sam = pysam.Samfile(bamname, "rb")
 
@@ -795,7 +804,7 @@ def rnacounter_main(bamname, annotname, options):
             if not row: break
             chrom = exon.chrom
         if chrexons:
-            chrexons.sort(key=attrgetter('start','end'))
+            chrexons.sort(key=attrgetter('start','end','name'))
             partition = partition_chrexons(chrexons)
             # Process chunks
             for (a,b) in partition:
@@ -824,6 +833,8 @@ def parse_args(args):
 
     assert args['--format'].lower() in ['gtf','bed'], \
         "FORMAT must be one of 'gtf' or 'bed'."
+    assert args['--format'].lower() != 'bed' or args['--type'] == 'genes', \
+        "BED input is not compatible with the '--type' option."
 
     # Type: one can actually give both as "-t genes,transcripts" but they
     # will be mixed in the output stream. Split the output using the last field ("Type").
@@ -851,6 +862,9 @@ def parse_args(args):
     except ValueError: raise ValueError("--threshold must be numeric.")
     try: args['--fraglength'] = int(args['--fraglength'])
     except ValueError: raise ValueError("--fraglength must be an integer.")
+    if args['--exon_cutoff']:
+        try: args['--exon_cutoff'] = int(args['--exon_cutoff'])
+        except ValueError: raise ValueError("--exon_cutoff must be an integer.")
 
     options = dict((k.lstrip('-').lower(), v) for k,v in args.iteritems())
     return bamname, annotname, options
