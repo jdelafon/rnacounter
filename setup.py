@@ -1,22 +1,11 @@
+from setuptools import setup
 
-
-from distutils.core import setup
-from distutils.extension import Extension
-from Cython.Build import cythonize
-from Cython.Distutils import build_ext
-
-import numpy as np
-
-extensions = [
-    Extension("rnacounter", ["rnacounter.pyx"],
-              include_dirs=[np.get_include()],
-             )
-]
-
-setup(
-    name = "rnacounter",
-    cmdclass = {'build_ext':build_ext},
-    ext_modules = cythonize(extensions),
-    #gdb_debug=True,
-)
-
+setup(name='rnacounter',
+      version='1.0',
+      description='Count reads in genomic intervals',
+      url='https://github.com/delafont/rnacounter',
+      author='Julien Delafontaine',
+      author_email='julien.delafontaine@epfl.ch',
+      license='GPL3',
+      packages=['rnacounter'],
+      zip_safe=False)
