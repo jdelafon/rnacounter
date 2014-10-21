@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
-from rnacounter import rnacounter
+try:
+    from rnacounter import rnacounter
+except ImportError:
+    import rnacounter
 import docopt
 
 if __name__ == '__main__':
