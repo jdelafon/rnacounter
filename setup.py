@@ -9,7 +9,7 @@ def readme():
 
 extensions = [
     Extension("rnacounter/rnacounter",        # .so
-              ["rnacounter/rnacounter.pyx", "rnacounter/rnacounter.c"],  # .c
+              ["rnacounter/rnacounter.pyx"], #"rnacounter/rnacounter.c"],  # .c
               include_dirs=[np.get_include()],
              )
 ]
@@ -21,18 +21,21 @@ setup(name='rnacounter',
     classifiers=[
       'Programming Language :: Python :: 2.7',
       'Topic :: Scientific/Engineering :: Bio-Informatics',
+      'Natural Language :: English',
+      'Operating System :: OS Independent',
+      'Development Status :: 5 - Production/Stable',
     ],
     keywords='rna-seq rnaseq count reads table sequencing genetics bioinformatics',
     url='https://github.com/delafont/rnacounter',
     author='Julien Delafontaine',
     author_email='julien.delafontaine@epfl.ch',
-    license='GPL3',
+    license='GPL-2',
     packages=['rnacounter'],
     zip_safe=False,
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['cython','numpy','docopt','nose'],
-    scripts=['rnacounter/rnacounter'],
+    scripts=['bin/rnacounter'],
     cmdclass = {'build_ext':build_ext},
     ext_modules = cythonize(extensions),
 )
