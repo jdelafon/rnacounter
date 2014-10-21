@@ -820,9 +820,6 @@ def rnacounter_main(bamname, annotname, options):
 ########################  Argument parsing  #########################
 
 
-def usage_string():
-    return __doc__
-
 def parse_args(args):
     bamname = os.path.abspath(args['BAM'])
     annotname = os.path.abspath(args['GTF'])
