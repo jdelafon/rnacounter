@@ -15,11 +15,11 @@ also available in the doc/ folder.
 
 Minimal example::
 
-    rnacounter test.bam test.gtf
+    rnacounter test.bam test.gtf        # Python 2.7 version
+    rnacounter3 test.bam test.gtf       # Python 3 version
 
 Installation:
 =============
-
 Manually:
 
     sudo python setup.py install
@@ -33,27 +33,24 @@ or better yet, with pip:
     sudo pip install rnacounter
 
 It installs as a standard Python library but includes the executable
-and puts it somewhere in your $PATH.
+and puts it somewhere in your $PATH. Dependencies should be added
+automatically.
+
+Use "python3", "easy_install3", "pip3" respectively to run it with the latest version of Python.
+The code is fully compatible with Python 2.7, but uses Python3's syntax.
+In particular, things that became iterators in Python3 will be treated as lists
+if Python2.7 is used (which may increase speed at the expense of the memory used).
 
 Dependencies:
 =============
-
-* Python 2.7
-* setuptools 7.0+
-
 Tests run with the library versions below, but may work with earlier versions.
 
+* setuptools 7.0+
+* pysam 0.7.5+
 * numpy 1.6.2+
+* scipy 0.9.0+
 * docopt 0.6.1+
 * cython 0.18+
-
-Content:
-========
-* rnacounter
-The main executable.
-
-* rnacounter.pyx:
-Cython version, to be compiled (see setup.py).
 
 Testing:
 =========
