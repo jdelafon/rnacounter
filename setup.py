@@ -9,7 +9,7 @@ def readme():
 
 extensions = [
     Extension("rnacounter/rnacounter",        # .so
-              ["rnacounter/rnacounter.pyx"], #"rnacounter/rnacounter.c"],  # .c
+              ["rnacounter/rnacounter.pyx"],  # .c
               include_dirs=[np.get_include()],
              )
 ]
@@ -37,7 +37,7 @@ setup(name='rnacounter',
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['cython','numpy','scipy','docopt','nose','pysam'],
-    scripts=['bin/rnacounter', 'bin/rnacounter3'],
+    scripts=['rnacounter/rnacounter', 'rnacounter/rnacounter3'],
     cmdclass = {'build_ext':build_ext},
     ext_modules = cythonize(extensions),
 )
