@@ -2,12 +2,11 @@
 
 try:
     from rnacounter import rnacounter
-except ImportError as e:
+except ImportError:
     import rnacounter
 import docopt
 
 if __name__ == '__main__':
-    print(rnacounter)
     args = docopt.docopt(rnacounter.__doc__)
     if args['join']:
         rnacounter.join([args['TAB']]+args['TAB2'])

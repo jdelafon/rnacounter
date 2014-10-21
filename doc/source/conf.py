@@ -49,7 +49,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'rnacounter'
-copyright = u'2014, Julien Delafontaine'
+copyright = u'2014, EPFL BBCF'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

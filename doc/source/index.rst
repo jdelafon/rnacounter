@@ -5,13 +5,14 @@
 
 Welcome to rnacounter's documentation!
 ======================================
+Bioinformatics and Biostatistics Core Facility, 2014.
 
 Contents:
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
-
+   tutorial_rnacounter
 
 Indices and tables
 ==================

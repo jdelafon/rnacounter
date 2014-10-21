@@ -16,7 +16,7 @@ extensions = [
 
 setup(name='rnacounter',
     version='1.0',
-    description='Count reads in genomic intervals',
+    description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[
       'Programming Language :: Python',
@@ -37,7 +37,7 @@ setup(name='rnacounter',
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['cython','numpy','scipy','docopt','nose','pysam'],
-    scripts=['bin/rnacounter'],
+    scripts=['bin/rnacounter', 'bin/rnacounter3'],
     cmdclass = {'build_ext':build_ext},
     ext_modules = cythonize(extensions),
 )
