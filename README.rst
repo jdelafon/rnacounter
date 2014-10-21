@@ -9,7 +9,8 @@ The code is under GPL-2 license.
 
 Usage:
 ======
-See "rnacounter --help" and the tutorial at [...<bbcflib tutorials>],
+See "rnacounter --help" and the tutorial at
+`http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html`_,
 also available in the doc/ folder.
 
 Minimal example::
