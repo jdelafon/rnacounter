@@ -20,15 +20,11 @@ Minimal example::
 
 Installation:
 =============
-Manually:
-
-    sudo python setup.py install
-
-or better, with easy_install:
+With easy_install::
 
     sudo easy_install rnacounter
 
-or better yet, with pip:
+or better yet, with pip::
 
     sudo pip install rnacounter
 
@@ -40,6 +36,11 @@ Use "python3", "easy_install3", "pip3" respectively to run it with the latest ve
 The code is fully compatible with Python 2.7, but uses Python3's syntax.
 In particular, things that became iterators in Python3 will be treated as lists
 if Python2.7 is used (which may increase speed at the expense of the memory used).
+
+Install from source: from the root of the project where setup.py lies, run::
+
+    sudo python setup.py install
+
 
 Dependencies:
 =============

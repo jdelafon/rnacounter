@@ -1,3 +1,5 @@
 include README.rst
 include doc/*
 include rnacounter/testfiles/*
+recursive-include cython *
+recursive-include rnacounter *.c

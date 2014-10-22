@@ -1,21 +1,45 @@
 from setuptools import setup, Extension
-from Cython.Build import cythonize
-from Cython.Distutils import build_ext
 import numpy as np
+
+try:
+    from Cython.Distutils import build_ext
+    from Cython.Build import cythonize
+except ImportError:
+    #from setuptools.command import build_ext
+    use_cython = False
+else:
+    use_cython = True
+
+
+cmdclass = { }
+ext_modules = [ ]
 
 def readme():
     with open('README.rst') as f:
         return f.read()
 
-extensions = [
-    Extension("rnacounter/rnacounter",        # .so
-              ["rnacounter/rnacounter.pyx"],  # .c
-              include_dirs=[np.get_include()],
-             )
-]
+
+if use_cython:
+    ext_modules += [
+        Extension("rnacounter/rnacounter",
+            ["rnacounter/rnacounter.pyx"],
+            include_dirs=[np.get_include()],
+        )
+    ]
+    cmdclass.update({ 'build_ext': build_ext })
+    ext_modules = cythonize(ext_modules)
+else:
+    ext_modules += [
+        Extension("rnacounter/rnacounter",
+            ["rnacounter/rnacounter.c"],
+            include_dirs=[np.get_include()],
+        )
+    ]
+
+
 
 setup(name='rnacounter',
-    version='1.0',
+    version='1.0.4',
     description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[
@@ -38,8 +62,8 @@ setup(name='rnacounter',
     test_suite='nose.collector',
     install_requires=['cython','numpy','scipy','docopt','nose','pysam'],
     scripts=['rnacounter/rnacounter', 'rnacounter/rnacounter3'],
-    cmdclass = {'build_ext':build_ext},
-    ext_modules = cythonize(extensions),
+    cmdclass = cmdclass,
+    ext_modules = ext_modules,
 )
 
 
