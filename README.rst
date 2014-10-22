@@ -1,5 +1,7 @@
 
-`rnacounter` estimates abundances of genes and their different transcripts
+Welcome!
+========
+Rnacounter estimates abundances of genes and their different transcripts
 from read densities. Exons and introns can also be quantified.
 It requires a genome-level BAM file and a
 GTF/GFF file describing the exon structure, such as those provided by Ensembl or GenRep.
@@ -12,7 +14,7 @@ The code is under GPL-2 license.
 Usage:
 ======
 See "rnacounter --help" and the tutorial at
-`http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html`_,
+http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html,
 also available in the doc/ folder.
 
 Minimal example::
@@ -32,14 +34,15 @@ or better yet, with pip::
 
     sudo pip install rnacounter
 
-It installs as a standard Python library but includes the executable
-and puts it somewhere in your $PATH. Dependencies should be added
-automatically.
-
-Use "easy_install3", "pip3" respectively to install the python3 version.
+Use "easy_install3", "pip3" respectively to install the python3 version
+and run it in command-line with "rnacounter3".
 The code is fully compatible with Python 2.7, but uses Python3's syntax.
 In particular, things that became iterators in Python3 will be treated as lists
 if Python2.7 is used (which may increase speed at the expense of the memory used).
+
+It installs as a standard Python library but includes the executable
+and puts it somewhere in your $PATH. Dependencies should be added
+automatically.
 
 To uninstall with pip::
 
@@ -47,6 +50,7 @@ To uninstall with pip::
 
 Build from source:
 ==================
+Clone or download the repository from https://github.com/delafont/rnacounter .
 From where rnacounter.pyx lies (rnacounter/rnacounter/), run::
 
     sudo python setup.py build_ext
