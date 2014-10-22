@@ -36,7 +36,7 @@ It installs as a standard Python library but includes the executable
 and puts it somewhere in your $PATH. Dependencies should be added
 automatically.
 
-Use "python3", "easy_install3", "pip3" respectively to run it with the latest version of Python.
+Use "easy_install3", "pip3" respectively to install the python3 version.
 The code is fully compatible with Python 2.7, but uses Python3's syntax.
 In particular, things that became iterators in Python3 will be treated as lists
 if Python2.7 is used (which may increase speed at the expense of the memory used).
@@ -70,8 +70,6 @@ Tests run with the library versions below, but may work with earlier versions.
 
 Testing:
 =========
-Unit tests in the tests/ folder, run "nosetests test_rnacounter.py".
-
 Testing files in the testfiles/ folder:
 - gapdhKO.bam: alignment on mm9 with only Gapdh covered.
 - mm9_3genes_renamed.gtf: extract of the Ensembl GTF with Gapdh, the gene before and the gene after it.
