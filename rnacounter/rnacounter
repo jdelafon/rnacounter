@@ -4,12 +4,10 @@ try:
     from rnacounter import parse_args
     import rnacounter
 except ImportError as e:
-    print e.message
     try:
         from rnacounter.rnacounter import parse_args
         from rnacounter import rnacounter
     except ImportError as ee:
-        print ee.message
         from .rnacounter import rnacounter
 import docopt
 

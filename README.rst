@@ -5,6 +5,8 @@ It requires a genome-level BAM file and a
 GTF/GFF file describing the exon structure, such as those provided by Ensembl or GenRep.
 The method used is described in [<ref>].
 
+It is not meant to be used as a library, but through its command-line tool "rnacounter".
+
 The code is under GPL-2 license.
 
 Usage:
@@ -20,6 +22,8 @@ Minimal example::
 
 Installation:
 =============
+First ensure that you have setuptools>=7.0 and numpy installed.
+
 With easy_install::
 
     sudo easy_install rnacounter
@@ -37,10 +41,21 @@ The code is fully compatible with Python 2.7, but uses Python3's syntax.
 In particular, things that became iterators in Python3 will be treated as lists
 if Python2.7 is used (which may increase speed at the expense of the memory used).
 
-Install from source: from the root of the project where setup.py lies, run::
+To uninstall with pip::
+
+    sudo pip uninstall rnacounter
+
+Build from source:
+==================
+From where rnacounter.pyx lies (rnacounter/rnacounter/), run::
+
+    sudo python setup.py build_ext
+
+It will recompile to create rnacounter.c, and build it.
+Then add the executable (rnacounter/rnacounter/rnacounter) to your $PATH,
+or install from the package root (rnacounter/)::
 
     sudo python setup.py install
-
 
 Dependencies:
 =============
