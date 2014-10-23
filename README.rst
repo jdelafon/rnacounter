@@ -36,9 +36,7 @@ or better yet, with pip::
 
 Use "easy_install3", "pip3" respectively to install the python3 version
 and run it in command-line with "rnacounter3".
-The code is fully compatible with Python 2.7, but uses Python3's syntax.
-In particular, things that became iterators in Python3 will be treated as lists
-if Python2.7 is used (which may increase speed at the expense of the memory used).
+The code is fully compatible with Python 2.7 and Python 3.
 
 It installs as a standard Python library but includes the executable
 and puts it somewhere in your $PATH. Dependencies should be added

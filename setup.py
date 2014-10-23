@@ -36,7 +36,7 @@ setup(name='rnacounter',
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['numpy','scipy','docopt','nose','pysam'],
-    scripts=['rnacounter/rnacounter', 'rnacounter/rnacounter3'],
+    scripts=['bin/rnacounter', 'bin/rnacounter3'],
     cmdclass = cmdclass,
     ext_modules = ext_modules,
 )
