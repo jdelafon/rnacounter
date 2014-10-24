@@ -1,5 +1,8 @@
 
-from rnacounter import rnacounter
+try:
+    from rnacounter import rnacounter
+except ImportError:
+    import rnacounter
 import docopt
 
 def main():
