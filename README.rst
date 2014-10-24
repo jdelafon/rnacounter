@@ -46,18 +46,24 @@ To uninstall with pip::
 
     sudo pip uninstall rnacounter
 
-Build from source:
-==================
+Building from source:
+=====================
+This allows to modify the Cython source code (rnacounter.pyx) before rebuilding.
+
 Clone or download the repository from https://github.com/delafont/rnacounter .
+
+You need cython installed (`pip install cython`).
+
 From where rnacounter.pyx lies (rnacounter/rnacounter/), run::
 
     sudo python setup.py build_ext
 
 It will recompile to create rnacounter.c, and build it.
-Then add the executable (rnacounter/rnacounter/rnacounter) to your $PATH,
-or install from the package root (rnacounter/)::
+Then add the executable (rnacounter/bin/rnacounter[3]) to your $PATH,
+or install from the package root (rnacounter/) with::
 
-    sudo python setup.py install
+    sudo python setup.py install        # Python 2.7 version
+    sudo python3 setup.py install       # Python 3 version
 
 Dependencies:
 =============
@@ -68,7 +74,6 @@ Tests run with the library versions below, but may work with earlier versions.
 * numpy 1.6.2+
 * scipy 0.9.0+
 * docopt 0.6.1+
-* cython 0.18+
 
 Testing:
 =========
