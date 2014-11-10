@@ -1,5 +1,4 @@
 from setuptools import setup, Extension
-import numpy as np
 
 def readme():
     with open('README.rst') as f:
@@ -7,10 +6,7 @@ def readme():
 
 cmdclass = { }
 ext_modules = [
-    Extension("rnacounter/rnacounter",
-        ["rnacounter/rnacounter.c"],
-        include_dirs=[np.get_include()],
-    )
+    Extension("rnacounter/rnacounter", ["rnacounter/rnacounter.c"])
 ]
 
 setup(name='rnacounter',
@@ -35,7 +31,7 @@ setup(name='rnacounter',
     zip_safe=False,
     include_package_data=True,
     test_suite='nose.collector',
-    install_requires=['numpy','scipy','docopt','nose','pysam'],
+    install_requires=['numpy','scipy','docopt','nose','pysam','cython'],
     scripts=['bin/rnacounter', 'bin/rnacounter3'],
     cmdclass = cmdclass,
     ext_modules = ext_modules,

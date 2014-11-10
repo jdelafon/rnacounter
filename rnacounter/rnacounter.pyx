@@ -756,8 +756,7 @@ def rnacounter_main(bamname, annotname, options):
     if options['output'] is None: options['output'] = sys.stdout
     else: options['output'] = open(options['output'], "wb")
     if options['noheader'] is False:
-        header = ['ID','Count','RPKM','Chrom','Start','End','Strand','GeneName','Type']
-        if options['stranded']: header += ['Sense']
+        header = ['ID','Count','RPKM','Chrom','Start','End','Strand','GeneName','Type','Sense','Synonym']
         options['output'].write('\t'.join(header)+'\n')
 
     if options['format'] == 'gtf':

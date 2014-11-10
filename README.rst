@@ -76,7 +76,7 @@ Tests run with the library versions below, but may work with earlier versions.
 * docopt 0.6.1+
 
 Testing:
-=========
+========
 Testing files in the testfiles/ folder:
 - gapdhKO.bam: alignment on mm9 with only Gapdh covered.
 - mm9_3genes_renamed.gtf: extract of the Ensembl GTF with Gapdh, the gene before and the gene after it.
@@ -95,4 +95,9 @@ ENSMUST00000117757, ENSMUST00000118875, ENSMUST00000147954
 and nothing on ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588 .
 
 Returns a count of 2459.62 (1091.71 RPK) for the gene.
+
+Troubleshooting:
+================
+Any bug report, usage issue or feature request not listed below can be addressed to
+julien.delafontaine@epfl.ch or webmaster.bbcf@epfl.ch .
 
