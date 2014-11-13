@@ -33,11 +33,11 @@ Then install rnacounter with easy_install::
 
 Or better yet, with pip::
 
-    sudo easy_install numpy
+    sudo pip install numpy
     sudo pip install rnacounter
 
 It installs as a standard Python library but includes the executable
-and puts it somewhere in your $PATH. Dependencies should be added
+and puts it somewhere in your $PATH. Dependencies will be added
 automatically.
 
 To uninstall with pip::
