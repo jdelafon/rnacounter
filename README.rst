@@ -19,8 +19,7 @@ also available in the doc/ folder.
 
 Minimal example::
 
-    rnacounter test.bam test.gtf        # Python 2.7 version
-    rnacounter3 test.bam test.gtf       # Python 3 version
+    rnacounter test.bam test.gtf
 
 Installation:
 =============
@@ -34,10 +33,6 @@ or better yet, with pip::
 
     sudo pip install rnacounter
 
-The code is fully compatible with Python 2.7 and Python 3.
-Use "easy_install3", "pip3" respectively to install the python3 version
-and run it in command-line with "rnacounter3" instead.
-
 It installs as a standard Python library but includes the executable
 and puts it somewhere in your $PATH. Dependencies should be added
 automatically.
@@ -45,6 +40,8 @@ automatically.
 To uninstall with pip::
 
     sudo pip uninstall rnacounter
+
+The code is fully compatible with Python 2.7 and Python 3.
 
 Building from source:
 =====================
@@ -62,8 +59,7 @@ It will recompile to create rnacounter.c, and build it.
 Then add the executable (rnacounter/bin/rnacounter[3]) to your $PATH,
 or install from the package root (rnacounter/) with::
 
-    sudo python setup.py install        # Python 2.7 version
-    sudo python3 setup.py install       # Python 3 version
+    sudo python setup.py install
 
 Dependencies:
 =============
