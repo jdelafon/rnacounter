@@ -1,4 +1,5 @@
 from setuptools import setup, Extension
+import numpy as np
 
 def readme():
     with open('README.rst') as f:
@@ -6,11 +7,12 @@ def readme():
 
 cmdclass = { }
 ext_modules = [
-    Extension("rnacounter/rnacounter", ["rnacounter/rnacounter.c"])
+    Extension("rnacounter/rnacounter", ["rnacounter/rnacounter.c"],
+              include_dirs=[np.get_include()])
 ]
 
 setup(name='rnacounter',
-    version='1.1.3.2',
+    version='1.1.3.4',
     description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[

@@ -24,6 +24,8 @@ Minimal example::
 
 Installation:
 =============
+First ensure that you have setuptools>=7.0 and numpy installed.
+
 With easy_install::
 
     sudo easy_install rnacounter
