@@ -5,8 +5,14 @@ except ImportError:
     import rnacounter
 import docopt
 
+
+# Copy the version given in setup.py
+import pkg_resources
+__version__ = pkg_resources.require("rnacounter")[0].version
+
+
 def main():
-    args = docopt.docopt(rnacounter.usage_string())
+    args = docopt.docopt(rnacounter.usage_string(), version=__version__)
     if args['join']:
         rnacounter.join([args['TAB']]+args['TAB2'])
     else:
