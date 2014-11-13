@@ -59,7 +59,7 @@ From where rnacounter.pyx lies (rnacounter/rnacounter/), run::
     sudo python setup.py build_ext
 
 It will recompile to create rnacounter.c, and build it.
-Then add the executable (rnacounter/bin/rnacounter[3]) to your $PATH,
+Then add the executable (rnacounter/bin/rnacounter) to your $PATH,
 or install from the package root (rnacounter/) with::
 
     sudo python setup.py install
@@ -73,6 +73,7 @@ Tests run with the library versions below, but may work with earlier versions.
 * numpy 1.6.2+
 * scipy 0.9.0+
 * docopt 0.6.1+
+* cython 0.20 +
 
 Testing:
 ========
