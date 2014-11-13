@@ -1,14 +1,17 @@
 from setuptools import setup, Extension
-import numpy as np
+
+try:
+    import numpy as np
+except ImportError:
+    raise ImportError("""Numpy is required for the installation to proceed.\n
+  Please install numpy first with `sudo easy_install numpy` or `sudo pip install numpy`.\n""")
 
 def readme():
     with open('README.rst') as f:
         return f.read()
 
-cmdclass = { }
 ext_modules = [
-    Extension("rnacounter/rnacounter", ["rnacounter/rnacounter.c"],
-              include_dirs=[np.get_include()])
+    Extension("rnacounter/rnacounter", ["rnacounter/rnacounter.c"])
 ]
 
 setup(name='rnacounter',
@@ -35,8 +38,9 @@ setup(name='rnacounter',
     test_suite='nose.collector',
     install_requires=['numpy','scipy','docopt','nose','pysam','cython'],
     scripts=['bin/rnacounter'],
-    cmdclass = cmdclass,
+    cmdclass = {},
     ext_modules = ext_modules,
+    include_dirs=[np.get_include()]
 )
 
 

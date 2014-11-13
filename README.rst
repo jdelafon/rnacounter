@@ -23,14 +23,17 @@ Minimal example::
 
 Installation:
 =============
-First ensure that you have setuptools>=7.0 and numpy installed.
+First ensure that you have numpy installed, or install it with::
 
-With easy_install::
+    sudo easy_install numpy
+
+Then install rnacounter with easy_install::
 
     sudo easy_install rnacounter
 
-or better yet, with pip::
+Or better yet, with pip::
 
+    sudo easy_install numpy
     sudo pip install rnacounter
 
 It installs as a standard Python library but includes the executable
