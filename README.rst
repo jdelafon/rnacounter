@@ -24,8 +24,6 @@ Minimal example::
 
 Installation:
 =============
-First ensure that you have setuptools>=7.0 and numpy installed.
-
 With easy_install::
 
     sudo easy_install rnacounter
@@ -34,9 +32,9 @@ or better yet, with pip::
 
     sudo pip install rnacounter
 
-Use "easy_install3", "pip3" respectively to install the python3 version
-and run it in command-line with "rnacounter3".
 The code is fully compatible with Python 2.7 and Python 3.
+Use "easy_install3", "pip3" respectively to install the python3 version
+and run it in command-line with "rnacounter3" instead.
 
 It installs as a standard Python library but includes the executable
 and puts it somewhere in your $PATH. Dependencies should be added

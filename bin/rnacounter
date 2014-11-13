@@ -1,4 +1,6 @@
-#!/usr/bin/env python
+#!/bin/sh
+''''which python >/dev/null && exec python "$0" "$@" # '''
+''''which python3  >/dev/null && exec python3  "$0" "$@" # '''
 
 from rnacounter.main import main
 main()
