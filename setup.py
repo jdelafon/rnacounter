@@ -12,7 +12,7 @@ ext_modules = [
 ]
 
 setup(name='rnacounter',
-    version='1.1.3.4',
+    version='1.1.3.6',
     description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[
@@ -34,7 +34,7 @@ setup(name='rnacounter',
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['numpy','scipy','docopt','nose','pysam','cython'],
-    scripts=['bin/rnacounter', 'bin/rnacounter3'],
+    scripts=['bin/rnacounter'],
     cmdclass = cmdclass,
     ext_modules = ext_modules,
 )
