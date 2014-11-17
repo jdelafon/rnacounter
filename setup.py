@@ -15,7 +15,7 @@ ext_modules = [
 ]
 
 setup(name='rnacounter',
-    version='1.1.3.9',
+    version='1.1.3.10',
     description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[

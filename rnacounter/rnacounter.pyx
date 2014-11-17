@@ -27,6 +27,8 @@ Options:
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout.
    -m METHOD, --method METHOD       Choose from 'nnls', 'raw', ('likelihood'-soon) [default: raw].
+
+Full documentation available at http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html
 """
 
 import pysam

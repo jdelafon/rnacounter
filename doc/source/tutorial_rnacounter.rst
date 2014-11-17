@@ -7,20 +7,24 @@ from read alignments. Exons and introns can also be quantified.
 It provides fast read counting in annotated genomic features as well as a simple,
 yet efficient solution to the quantification of isoforms from RNA-seq data.
 The method used is described in [<ref>].
+A typical run is expected to take less than 2 minutes for a 1Gb BAM file from mouse
+RNA sequencing, increasing linearly with the BAM size.
 
 For all these tasks it only requires a BAM file from a read mapping on the genome,
 and a single GTF/GFF file describing the exon structure
 such as those provided by Ensembl or GenRep.
-The GTF is assumed to be sorted at least w.r.t. chromosome name,
-and the chromosome identifiers in the GTF must be the same as the BAM references.
 
-A typical run is expected to take less than 2 minutes for a 1Gb BAM file from mouse
-RNA sequencing.
+It is not meant to be used as a library, but through its command-line tool "rnacounter".
+
+The code project is hosted in Github (https://github.com/delafont/rnacounter), GPL-2 licensed.
 
 Basic Usage
 -----------
-This command will create a tab-delimited text file of gene counts, their RPKM
-and annotation information such as the genomic location::
+The GTF is assumed to be sorted at least w.r.t. chromosome name,
+and the chromosome identifiers in the GTF must be the same as the BAM references.
+
+The following command will create a tab-delimited text file of gene counts,
+RPKM and annotation information such as the genomic location::
 
    rnacounter test.bam test.gtf > counts_table.txt
 

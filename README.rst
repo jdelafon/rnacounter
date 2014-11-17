@@ -1,15 +1,22 @@
 
 Welcome!
 ========
-Rnacounter estimates abundances of genes and their different transcripts
-from read densities. Exons and introns can also be quantified.
-It requires a genome-level BAM file and a
-GTF/GFF file describing the exon structure, such as those provided by Ensembl or GenRep.
+`Rnacounter` estimates abundances of genes and their different transcripts
+from read alignments. Exons and introns can also be quantified.
+
+It provides fast read counting in annotated genomic features as well as a simple,
+yet efficient solution to the quantification of isoforms from RNA-seq data.
 The method used is described in [<ref>].
+A typical run is expected to take less than 2 minutes for a 1Gb BAM file from mouse
+RNA sequencing, increasing linearly with the BAM size.
+
+For all these tasks it only requires a BAM file from a read mapping on the genome,
+and a single GTF/GFF file describing the exon structure
+such as those provided by Ensembl or GenRep.
 
 It is not meant to be used as a library, but through its command-line tool "rnacounter".
 
-The code is under GPL-2 license.
+The code project is hosted in Github (https://github.com/delafont/rnacounter), GPL-2 licensed.
 
 Usage:
 ======
@@ -68,12 +75,12 @@ Dependencies:
 =============
 Tests run with the library versions below, but may work with earlier versions.
 
-* setuptools 7.0+
-* pysam 0.7.5+
-* numpy 1.6.2+
-* scipy 0.9.0+
-* docopt 0.6.1+
-* cython 0.20 +
+* setuptools 7.0+  (installation)
+* pysam 0.7.5+     (samtools wrapper)
+* numpy 1.6.2+     (efficient numeric arrays)
+* scipy 0.9.0+     (NNLS algorithm)
+* docopt 0.6.1+    (command-line args parsing)
+* cython 0.20+     (translate Python code to C)
 
 Testing:
 ========
@@ -94,7 +101,7 @@ The least squares method returns counts on the following transcripts:
 ENSMUST00000117757, ENSMUST00000118875, ENSMUST00000147954
 and nothing on ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588 .
 
-Returns a count of 2459.62 (1091.71 RPK) for the gene.
+Returns a count of 2456.87 for the gene.
 
 Troubleshooting:
 ================
