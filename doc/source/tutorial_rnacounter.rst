@@ -22,6 +22,8 @@ Basic Usage
 -----------
 The GTF is assumed to be sorted at least w.r.t. chromosome name,
 and the chromosome identifiers in the GTF must be the same as the BAM references.
+The BAM is supposed to be sorted and indexed. If the index is not found it will be
+created automatically (takes a few minutes).
 
 The following command will create a tab-delimited text file of gene counts,
 RPKM and annotation information such as the genomic location::
