@@ -189,7 +189,7 @@ Miscellaneous notes
   Rather than an option/default to remove multiply mapping reads, this filtering
   - if desired - should be done at the mapping step choosing the right parameters,
   or the BAM file can be filtered afterwards. On the contrary if you want to keep
-  multiple mapping, you can use the `--nh` option.
+  multiple mapping but correct for it, you can use the `--nh` option.
 
 * Exons and introns:
 
@@ -221,7 +221,6 @@ Miscellaneous notes
 
   At the moment alignments of paired-end reads are not treated specially, i.e.
   all reads are considered as single-end.
-
 
 Examples
 --------

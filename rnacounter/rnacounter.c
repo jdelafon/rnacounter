@@ -6023,7 +6023,7 @@ static int __pyx_pf_10rnacounter_10rnacounter_7Counter_1n_2__set__(struct __pyx_
  *         int start,end,strand,length,multiplicity
  *         double score,count,count_anti,rpk,rpk_anti
  *     def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',             # <<<<<<<<<<<<<<
- *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='',
+ *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='.',
  *              double score=0.0, int strand=0, int length=0, int multiplicity=1,
  */
 
@@ -6062,7 +6062,7 @@ static int __pyx_pw_10rnacounter_10rnacounter_13GenomicObject_1__init__(PyObject
     values[3] = ((PyObject*)__pyx_kp_s__24);
     values[6] = ((PyObject*)__pyx_kp_s__24);
     values[7] = ((PyObject*)__pyx_kp_s__24);
-    values[8] = ((PyObject*)__pyx_kp_s__24);
+    values[8] = ((PyObject*)__pyx_kp_s_);
     if (unlikely(__pyx_kwds)) {
       Py_ssize_t kw_args;
       const Py_ssize_t pos_args = PyTuple_GET_SIZE(__pyx_args);
@@ -6486,7 +6486,7 @@ static int __pyx_pf_10rnacounter_10rnacounter_13GenomicObject___init__(struct __
  *         int start,end,strand,length,multiplicity
  *         double score,count,count_anti,rpk,rpk_anti
  *     def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',             # <<<<<<<<<<<<<<
- *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='',
+ *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='.',
  *              double score=0.0, int strand=0, int length=0, int multiplicity=1,
  */
 
@@ -7943,7 +7943,7 @@ static int __pyx_pf_10rnacounter_10rnacounter_13GenomicObject_12multiplicity_2__
  *         int start,end,strand,length,multiplicity
  *         double score,count,count_anti,rpk,rpk_anti             # <<<<<<<<<<<<<<
  *     def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',
- *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='',
+ *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='.',
  */
 
 /* Python wrapper */
@@ -28480,7 +28480,7 @@ static int __Pyx_InitCachedConstants(void) {
  *         int start,end,strand,length,multiplicity
  *         double score,count,count_anti,rpk,rpk_anti
  *     def __init__(self, tuple id=(0,), str gene_id='', str gene_name='',             # <<<<<<<<<<<<<<
- *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='',
+ *              str chrom='', int start=0, int end=0, str name='', str ftype='', str synonyms='.',
  *              double score=0.0, int strand=0, int length=0, int multiplicity=1,
  */
   __pyx_tuple__23 = PyTuple_Pack(1, __pyx_int_0); if (unlikely(!__pyx_tuple__23)) {__pyx_filename = __pyx_f[0]; __pyx_lineno = 162; __pyx_clineno = __LINE__; goto __pyx_L1_error;}
