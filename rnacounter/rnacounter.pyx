@@ -101,7 +101,6 @@ def parse_bed(str line,str gtf_ftype):
         score = _score(row[4])
     else: score = 0.0
     exon_nr = next(Ecounter)
-    #exon_id = 'E%d'%exon_nr
     return Exon(id=(exon_nr,), gene_id=name, gene_name=name, chrom=chrom, start=start, end=end,
                 name=name, score=score, strand=strand, transcripts=set([name]))
 
@@ -825,6 +824,10 @@ def rnacounter_main(bamname, annotname, options):
 def usage_string():
     return __doc__
 
+def errmsg(message):
+    sys.stderr.write('\n\t'+message + '\n\n')
+    sys.exit(1)
+
 def parse_args(args):
     bamname = os.path.abspath(args['BAM'])
     annotname = os.path.abspath(args['GTF'])
@@ -851,15 +854,18 @@ def parse_args(args):
     # the method at index i will be applied to feature type at index i.
     args['--method'] = [x.lower() for x in args['--method'].split(',')]
     if len(args['--method']) > 1:  # multiple methods given
-        assert len(args['--method']) == len(args['--type']), \
-            "TYPE and METHOD arguments must have the same number of elements."
+        if not len(args['--method']) == len(args['--type']):
+            errmsg("TYPE and METHOD arguments must have the same number of elements.")
     elif len(args['--type']) > 1:  # apply same method to all types
         args['--method'] = args['--method'] * len(args['--type'])
-    assert all(x in ["raw","nnls","indirect-nnls"] for x in args['--method']), \
-        "METHOD must be one of 'raw', 'nnls' or 'indirect-nnls'."
+    if not all(x in ["raw","nnls","indirect-nnls"] for x in args['--method']):
+        errmsg("METHOD must be one of 'raw', 'nnls' or 'indirect-nnls'.")
     method_map = {'raw':0, 'nnls':1, "indirect-nnls":2}  # avoid comparing strings later
     args['--method'] = [method_map[x] for x in args['--method']]
     args['--method'] = dict(list(zip(args['--type'],args['--method'])))
+    for k,v in args['--method'].items():
+        if v == 2 and k != 0:
+            errmsg("'indirect-nnls' method can only be applied to type 'genes'.")
 
     try: args['--threshold'] = float(args['--threshold'])
     except ValueError: raise ValueError("--threshold must be numeric.")
