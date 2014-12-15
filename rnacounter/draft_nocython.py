@@ -25,8 +25,8 @@ Options:
    -t TYPE, --type TYPE             Type of genomic features to count reads in:
                                     'genes', 'transcripts', 'exons' or 'introns' [default: genes].
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
-   -o OUTPUT, --output OUTPUT       Output file to redirect stdout.
-   -m METHOD, --method METHOD       Choose from 'nnls', 'raw', ('likelihood'-soon) [default: raw].
+   -o OUTPUT, --output OUTPUT       Output file to redirect stdout (optional).
+   -m METHOD, --method METHOD       Choose from 'nnls', 'raw', 'indirect-nnls' [default: raw].
 """
 
 import pysam
@@ -392,13 +392,6 @@ def count_reads(exons,ckreads,multiple,stranded):
         exons[idx2].increment(float(ali_len)/float(read_len), alignment, multiple,stranded)
 
 
-def get_total_nreads(sam):
-    Ncounter = Counter()
-    for ref,length in itertools.izip(sam.references,sam.lengths):
-        sam.fetch(ref,0,length, callback=Ncounter)
-    return Ncounter.n
-
-
 ######################  Expression inference  #######################
 
 
@@ -479,6 +472,20 @@ def estimate_expression_raw(feat_class, pieces, ids, exons, norm_cst, stranded):
     return feats
 
 
+def genes_from_transcripts(transcripts):
+    genes = []
+    for k,g in itertools.groupby(transcripts, key=attrgetter("gene_id")):
+        g = list(g)
+        t0 = g[0]
+        glen = sum([x.length for x in cobble(g)])
+        genes.append(Gene(name=t0.gene_name,
+                rpk=sum([x.rpk for x in g]), rpk_anti=sum([x.rpk_anti for x in g]),
+                count=sum([x.count for x in g]), count_anti=sum([x.count_anti for x in g]),
+                chrom=t0.chrom, start=t0.start, end=g[len(g)-1].end, length=glen,
+                gene_id=t0.gene_id, gene_name=t0.gene_name, strand=t0.strand))
+    return genes
+
+
 ###########################  Main script  ###########################
 
 
@@ -538,7 +545,7 @@ def process_chunk(ckexons, sam, chrom, options):
     for p in pieces:
         for t in p.transcripts:
             t2p.setdefault(t,[]).append(p)
-    if 1 in types or 3 in types:
+    if (1 in types) or (3 in types) or (0 in types and methods[0]==2):
         replace = filter_transcripts(t2p, exon_cutoff)
         for p in pieces + exons:
             p.transcripts = set(replace[t] for t in p.transcripts)
@@ -582,15 +589,6 @@ def process_chunk(ckexons, sam, chrom, options):
     for p in pieces:
         p.name = simplify(p.name)  # remove duplicates in names
     genes=[]; transcripts=[]; exons2=[]; introns2=[]
-    # Genes - 0
-    if 0 in types:
-        method = methods.get(0,0)
-        if method == 0:
-            genes = estimate_expression_raw(Gene,pieces,gene_ids,exons,norm_cst,stranded)
-        elif method == 1:
-            genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,norm_cst,stranded,weighted)
-        for gene in genes:
-            gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
     # Transcripts - 1
     if 1 in types:
         method = methods.get(1,0)
@@ -601,6 +599,22 @@ def process_chunk(ckexons, sam, chrom, options):
         for trans in transcripts:
             trans.rpk = correct_fraglen_bias(trans.rpk, trans.length, fraglength)
             trans.synonyms = ','.join(synonyms.get(trans.name, ['.']))
+    # Genes - 0
+    if 0 in types:
+        method = methods.get(0,0)
+        if method == 0:
+            genes = estimate_expression_raw(Gene,pieces,gene_ids,exons,norm_cst,stranded)
+        elif method == 1:
+            genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,norm_cst,stranded,weighted)
+        elif method == 2:
+            if len(transcripts)==0:
+                transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+                genes = genes_from_transcripts(transcripts)
+                transcripts = []
+            else:
+                genes = genes_from_transcripts(transcripts)
+        for gene in genes:
+            gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
     # Exons - 2
     if 2 in types:
         method = methods.get(2,0)
@@ -679,7 +693,7 @@ def rnacounter_main(bamname, annotname, options):
 
     ## Get total number of reads
     if options['normalize'] is None:
-        options['normalize'] = get_total_nreads(sam) / 1.0e6
+        options['normalize'] = sam.mapped / 1.0e6
     else:
         options['normalize'] = float(options['normalize'])
     options['normalize'] = 1.0
@@ -759,9 +773,9 @@ def parse_args(args):
             "TYPE and METHOD arguments must have the same number of elements."
     elif len(args['--type']) > 1:  # apply same method to all types
         args['--method'] = args['--method'] * len(args['--type'])
-    assert all(x in ["raw","nnls","wnnls"] for x in args['--method']), \
-        "METHOD must be one of 'raw' or 'nnls'."
-    method_map = {'raw':0, 'nnls':1, "wnnls":2}  # avoid comparing strings later
+    assert all(x in ["raw","nnls","indirect-nnls"] for x in args['--method']), \
+        "METHOD must be one of 'raw', 'nnls' or 'indirect-nnls'."
+    method_map = {'raw':0, 'nnls':1, "indirect-nnls":2}  # avoid comparing strings later
     args['--method'] = [method_map[x] for x in args['--method']]
     args['--method'] = dict(list(zip(args['--type'],args['--method'])))
 
