@@ -171,8 +171,11 @@ Options
   Feature counts are inferred from the counts on (slices of) exons
   with the chosen `--method`: "raw" (htseq-count-like) or
   "nnls" (non-negative least squares, see [<ref>]).
-  The default is "raw" to not disturb habits, but "nnls" is advised,
-  and should be mandatory at the transcripts level (see Example below).
+  The default is "raw" to not disturb habits, but "nnls" is advised
+  especially at the transcripts level (see Example below).
+  For genes (`-t genes`), a special method "indirect-nnls" exists that calculates
+  transcripts expressions by NNLS and returns the gene count as the sum
+  of all its transcripts counts.
 
 Miscellaneous notes
 -------------------

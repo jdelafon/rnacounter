@@ -26,7 +26,7 @@ Options:
                                     'genes', 'transcripts', 'exons' or 'introns' [default: genes].
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout (optional).
-   -m METHOD, --method METHOD       Choose from 'nnls', 'raw', 'indirect-nnls' [default: raw].
+   -m METHOD, --method METHOD       Counting method: 'nnls', 'raw' or 'indirect-nnls' [default: raw].
 
 Full documentation available at http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html
 """
