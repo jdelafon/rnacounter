@@ -236,21 +236,15 @@ cdef class Gene(GenomicObject):
 #####################  Operations on intervals  #####################
 
 
-cdef Exon intersect_exons_list(list feats):
-    """The intersection of a list *feats* of GenomicObjects.
-    If *multiple* is True, permits multiplicity: if the same exon E1 is
-    given twice, there will be "E1|E1" parts. Otherwise pieces are unique."""
-    cdef Exon x,y,f
+cdef GenomicObject intersect_exons_list(list feats):
+    """The intersection of a list *feats* of GenomicObjects."""
+    cdef GenomicObject f
     feats = list(set(feats))
+    f = feats[0]
     if len(feats) == 1:
-        #return copy.deepcopy(feats[0])
-        # : unavailable in Cython, or must implement the "pickle protocol" with the __reduce__ method
-        f = feats[0]
-        return Exon(id=f.id,gene_id=f.gene_id,gene_name=f.gene_name,
-            chrom=f.chrom,start=f.start,end=f.end,name=f.name,score=f.score,
-            strand=f.strand,transcripts=f.transcripts)
+        return f.__and__(f)
     else:
-        return reduce(Exon.__and__, feats)
+        return reduce(f.__class__.__and__, feats)
 
 cdef list cobble(list exons):
     """Split exons into non-overlapping parts.
@@ -546,11 +540,11 @@ cdef list genes_from_transcripts(list transcripts):
     cdef str k
     cdef int glen
     genes = []
-    for k,g in itertools.groupby(transcripts, key=attrgetter("gene_id")):
-        g = list(g)
+    for k,group in itertools.groupby(transcripts, key=attrgetter("gene_id")):
+        g = list(group)
         t0 = g[0]
         glen = sum([x.length for x in cobble(g)])
-        genes.append(Gene(name=t0.gene_name,
+        genes.append(Gene(name=t0.gene_id,
                 rpk=sum([x.rpk for x in g]), rpk_anti=sum([x.rpk_anti for x in g]),
                 count=sum([x.count for x in g]), count_anti=sum([x.count_anti for x in g]),
                 chrom=t0.chrom, start=t0.start, end=g[len(g)-1].end, length=glen,
@@ -679,7 +673,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     genes=[]; transcripts=[]; exons2=[]; introns2=[]
     # Transcripts - 1
     if 1 in types:
-        method = methods.get(0,1)
+        method = methods.get(1,1)
         if method == 1:
             transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
         elif method == 0:
@@ -695,12 +689,12 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
         elif method == 1:
             genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,norm_cst,stranded,weighted)
         elif method == 2:
-            if len(transcripts) == 0:
-                transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+            if 1 in types and methods.get(1) == 1:
                 genes = genes_from_transcripts(transcripts)
-                transcripts = []
             else:
-                genes = genes_from_transcripts(transcripts)
+                transcripts2 = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+                genes = genes_from_transcripts(transcripts2)
+                transcripts2 = []
         for gene in genes:
             gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
     # Exons - 2

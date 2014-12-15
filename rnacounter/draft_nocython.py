@@ -478,7 +478,7 @@ def genes_from_transcripts(transcripts):
         g = list(g)
         t0 = g[0]
         glen = sum([x.length for x in cobble(g)])
-        genes.append(Gene(name=t0.gene_name,
+        genes.append(Gene(name=t0.gene_id,
                 rpk=sum([x.rpk for x in g]), rpk_anti=sum([x.rpk_anti for x in g]),
                 count=sum([x.count for x in g]), count_anti=sum([x.count_anti for x in g]),
                 chrom=t0.chrom, start=t0.start, end=g[len(g)-1].end, length=glen,
@@ -591,7 +591,7 @@ def process_chunk(ckexons, sam, chrom, options):
     genes=[]; transcripts=[]; exons2=[]; introns2=[]
     # Transcripts - 1
     if 1 in types:
-        method = methods.get(1,0)
+        method = methods.get(1,1)
         if method == 1:
             transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
         elif method == 0:
@@ -607,12 +607,12 @@ def process_chunk(ckexons, sam, chrom, options):
         elif method == 1:
             genes = estimate_expression_NNLS(Gene,pieces,gene_ids,exons,norm_cst,stranded,weighted)
         elif method == 2:
-            if len(transcripts)==0:
-                transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+            if 1 in types and methods.get(1) == 1:
                 genes = genes_from_transcripts(transcripts)
-                transcripts = []
             else:
-                genes = genes_from_transcripts(transcripts)
+                transcripts2 = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+                genes = genes_from_transcripts(transcripts2)
+                transcripts2 = []
         for gene in genes:
             gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
     # Exons - 2
