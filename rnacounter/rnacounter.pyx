@@ -29,6 +29,7 @@ Options:
    -m METHOD, --method METHOD       Counting method: 'nnls', 'raw' or 'indirect-nnls' [default: raw].
 
 Full documentation available at http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html
+
 """
 
 import pysam
@@ -246,8 +247,7 @@ cdef GenomicObject intersect_exons_list(list feats):
         return reduce(f.__class__.__and__, feats)
 
 cdef list cobble(list exons):
-    """Split exons into non-overlapping parts.
-    :param multiple: see intersect_exons_list()."""
+    """Split exons into non-overlapping parts."""
     cdef list ends, active_exons, cobbled
     cdef GenomicObject e
     cdef tuple a,b
@@ -373,7 +373,7 @@ cdef int count_reads(list exons,object ckreads,bint multiple,bint stranded) exce
     """Adds (#aligned nucleotides/read length) to exon counts.
     Deals with indels, junctions etc.
     :param multiple: divide the count by the NH tag.
-    :param standed: for strand-specific protocols, use the strand information."""
+    :param stranded: for strand-specific protocols, use the strand information."""
     cdef int current_idx, idx2, pos, ali_pos, nexons
     cdef int exon_start, exon_end, shift, op, ali_len, read_len
     cdef object alignment

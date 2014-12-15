@@ -27,6 +27,9 @@ Options:
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout (optional).
    -m METHOD, --method METHOD       Counting method: 'nnls', 'raw' or 'indirect-nnls' [default: raw].
+
+Full documentation available at http://bbcf.epfl.ch/bbcflib/tutorial_rnacounter.html
+
 """
 
 import pysam
@@ -229,8 +232,7 @@ def intersect_exons_list(feats):
         return reduce(lambda x,y: x&y, feats)
 
 def cobble(exons):
-    """Split exons into non-overlapping parts.
-    :param multiple: see intersect_exons_list()."""
+    """Split exons into non-overlapping parts."""
     ends = [(e.start,1,e) for e in exons] + [(e.end,0,e) for e in exons]
     ends.sort()
     active_exons = []
@@ -338,7 +340,7 @@ def count_reads(exons,ckreads,multiple,stranded):
     """Adds (#aligned nucleotides/read length) to exon counts.
     Deals with indels, junctions etc.
     :param multiple: divide the count by the NH tag.
-    :param standed: for strand-specific protocols, use the strand information."""
+    :param stranded: for strand-specific protocols, use the strand information."""
     current_idx = 0
     nexons = len(exons)
     for alignment in ckreads:
