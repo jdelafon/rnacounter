@@ -41,6 +41,24 @@ You can print this help page directly with::
 
    rnacounter -h
 
+Input files format
+------------------
+A BAM file is the result of any common read aligner (Bowtie, BWA, ...).
+BAM files specification: http://samtools.github.io/hts-specs/SAMv1.pdf
+
+A GTF file (sometimes also called GFF or GFF2/3) looks like this::
+
+    chr1	Ensembl	exon	11868	12227	.	+	.	exon_id "ENSE00002234944"; transcript_id "ENST00000456328"; gene_id "ENSG00000223972"; gene_name "DDX11L1"
+    chr1	Ensembl	exon	12009	12057	.	+	.	exon_id "ENSE00001948541"; transcript_id "ENST00000450305"; gene_id "ENSG00000223972"; gene_name "DDX11L1"
+    ...
+
+The last column contains various optional annotation, in an arbitrary order.
+I exon_id is not present, a random one will be generated.
+If any of the others mentioned in the example are
+not present (e.g. transcript_id), they will be given the value of exon_id.
+All other annotations will be ignored.
+GTF/GFF specification: http://www.ensembl.org/info/website/upload/gff.html
+
 Output format
 -------------
 
