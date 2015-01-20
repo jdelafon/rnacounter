@@ -32,6 +32,11 @@ RPKM and annotation information such as the genomic location::
 
 Many options are then available, listed below.
 
+The special command `rnacounter test` runs the program on already included
+small sample files to check that it works correctly::
+
+   rnacounter test
+
 Use `rnacounter join` to merge several output files produced using **the same annotation**,
 to create a single table with counts from all samples::
 
@@ -58,6 +63,9 @@ If any of the others mentioned in the example are
 not present (e.g. transcript_id), they will be given the value of exon_id.
 All other annotations will be ignored.
 GTF/GFF specification: http://www.ensembl.org/info/website/upload/gff.html
+
+One can dowload suitable GTF files from Ensembl (under "Gene sets"):
+http://www.ensembl.org/info/data/ftp/index.html
 
 Output format
 -------------
@@ -187,7 +195,7 @@ Options
 * :option:`-m`, :option:`--method`:
 
   Feature counts are inferred from the counts on (slices of) exons
-  with the chosen `--method`: "raw" (htseq-count-like) or
+  with the chosen `--method`: "raw" (htseq-count-like),
   "nnls" (non-negative least squares, see [<ref>]).
   The default is "raw" to not disturb habits, but "nnls" is advised
   especially at the transcripts level (see Example below).
@@ -201,7 +209,9 @@ Miscellaneous notes
 * Overlapping regions:
 
   In "raw" counting mode, regions spanned by exon from two or more genes,
-  together with the alignements inside these regions, are ignored (ambiguous).
+  together with the alignements inside these regions, are ignored (ambiguous),
+  unless the overlapping features are on different strands and the `--stranded`
+  option is used.
   The "nnls" mode tries to resolve the ambiguity in the same way
   it does for multiple isoforms.
 
@@ -227,8 +237,8 @@ Miscellaneous notes
 * Non-integer counts:
 
   The fact that some reads cross exon boundaries as well as considering the NH flag
-  make the reported number not be integers. They still represent count data and can
-  be rounded afterwards if necessary.
+  make the reported numbers not be integers. Some discrete distributions-based
+  programs for differential expression analysis require to round them.
 
 * Custom input:
 
@@ -252,8 +262,8 @@ Examples
 
 * Compare gene counts between two conditions, HTSeq-like::
 
-    rnacounter -n 1 group1.bam mouse.gtf > gene_counts1.txt
-    rnacounter -n 1 group2.bam mouse.gtf > gene_counts2.txt
+    rnacounter group1.bam mouse.gtf > gene_counts1.txt
+    rnacounter group2.bam mouse.gtf > gene_counts2.txt
     rnacounter join gene_counts1.txt gene_counts2.txt > gene_counts.txt
 
   Then send it to DESeq/EdgeR/whatever other stats program that asks for such a table.

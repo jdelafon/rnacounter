@@ -47,6 +47,17 @@ It installs as a standard Python library but includes the executable
 and puts it somewhere in your $PATH. Dependencies will be added
 automatically.
 
+Check that it works with the `test` command::
+
+    rnacounter test
+
+It should display comething similar to this::
+
+    ID	Count	RPKM	Chrom	Start	End	Strand	GeneName	Type	Sense	Synonym
+    ENSMUSG00000038271	0.0	0.0	chr6	125095258	125111800	1	Iffo1	Gene	.	.
+    ENSMUSG00000057666	3956.87179487	434612.223694	chr6	125111870	125116485	-1	Gapdh	Gene	.	.
+    ENSMUSG00000038252	0.0	0.0	chr6	125118026	125141613	-1	Ncapd2	Gene	.	.
+
 To uninstall with pip::
 
     sudo pip uninstall rnacounter
@@ -93,6 +104,10 @@ Example::
 
     rnacounter testfiles/gapdhKO.bam testfiles/mm9_3genes_renamed.gtf
 
+(which is equivalent to what the `test` command does)::
+
+    rnacounter test
+
 The BAM contains 4041 reads all aligning perfectly on Gapdh (ENSMUSG00000057666) exons,
 mostly on ENSMUSE00000487077 but also ENSMUSE00000751942 and ENSMUSE00000886744.
 Nothing on other exons, which makes it a good example of badly conditioned input data...
@@ -101,7 +116,7 @@ The least squares method returns counts on the following transcripts:
 ENSMUST00000117757, ENSMUST00000118875, ENSMUST00000147954
 and nothing on ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588 .
 
-Returns a count of 2456.87 for the gene.
+Returns a count of 3956.87 for the gene.
 
 Troubleshooting:
 ================
