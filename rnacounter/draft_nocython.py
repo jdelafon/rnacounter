@@ -5,7 +5,7 @@
 Usage:
    rnacounter test
    rnacounter join TAB [TAB2 ...]
-   rnacounter  [--version] [-h]
+   rnacounter  (--version | -h)
    rnacounter  [...] BAM GTF
    rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
                [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]

@@ -6,6 +6,7 @@ try:
 except ImportError:
     import unittest
 from numpy.testing import assert_almost_equal
+from pkg_resources import resource_filename
 
 # Nosetest flag #
 __test__ = True
@@ -14,7 +15,8 @@ __test__ = True
 from rnacounter.draft_nocython import *
 import pysam
 
-path = os.path.abspath("../testfiles/")
+bamtest = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
+gtftest =  os.path.abspath(resource_filename('testfiles', 'mm9_3genes_renamed.gtf'))
 
 
 class Test_Parse_GTF(unittest.TestCase):

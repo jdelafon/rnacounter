@@ -7,12 +7,11 @@ try:
 except ImportError:
     import rnacounter
 import docopt, os
+from pkg_resources import resource_filename, require
 
 
 # Copy the version given in setup.py
-import pkg_resources
-__version__ = pkg_resources.require("rnacounter")[0].version
-
+__version__ = require("rnacounter")[0].version
 
 def main():
     args = docopt.docopt(rnacounter.usage_string(), version=__version__)
@@ -20,10 +19,8 @@ def main():
         rnacounter.join([args['TAB']]+args['TAB2'])
     elif args['test']:
         options = rnacounter.parse_args(args)
-        local = os.path.abspath(os.path.dirname(__file__))
-        testfiles = os.path.join(local, "..", "tests", "testfiles")
-        bamname = os.path.join(testfiles, "gapdhKO.bam")
-        annotname = os.path.join(testfiles, "mm9_3genes_renamed.gtf")
+        bamname = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
+        annotname = os.path.abspath(resource_filename('testfiles', 'mm9_3genes_renamed.gtf'))
         rnacounter.rnacounter_main(bamname,annotname, options)
     else:
         bamname = os.path.abspath(args['BAM'])

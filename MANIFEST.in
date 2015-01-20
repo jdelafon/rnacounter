@@ -1,4 +1,6 @@
 include README.rst
 include doc/*
-recursive-include tests/testfiles *
+include testfiles/gapdhKO.bam
+include testfiles/gapdhKO.bam.bai
+include testfiles/mm9_3genes_renamed.gtf
 recursive-include rnacounter *.c
