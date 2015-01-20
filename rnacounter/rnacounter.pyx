@@ -3,10 +3,11 @@
 #cython: cdivision=True
 """
 Usage:
+   rnacounter test
    rnacounter join TAB [TAB2 ...]
-   rnacounter  [...] BAM GTF
    rnacounter  [--version] [-h]
-               [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
+   rnacounter  [...] BAM GTF
+   rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
                [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]
                BAM GTF
 
@@ -175,7 +176,6 @@ cdef class GenomicObject(object):
         self.synonyms = synonyms
     def __and__(self,other):
         """The intersection of two GenomicObjects"""
-        assert self.chrom==other.chrom, "Cannot add features from different chromosomes"
         return self.__class__(
             id = self.id + other.id,
             gene_id = '|'.join(set([self.gene_id, other.gene_id])),
@@ -210,7 +210,7 @@ cdef class Exon(GenomicObject):
                     break
             x = x * NH
         if stranded:
-            # read/exon stand mismatch
+            # read/exon strand mismatch
             if (alignment.is_reverse is False and self.strand == 1) \
             or (alignment.is_reverse is True and self.strand == -1):
                 self.count += x
@@ -829,11 +829,6 @@ def errmsg(message):
     sys.exit(1)
 
 def parse_args(args):
-    bamname = os.path.abspath(args['BAM'])
-    annotname = os.path.abspath(args['GTF'])
-    assert os.path.exists(bamname), "BAM file not found: %s" %bamname
-    assert os.path.exists(annotname), "GTF file not found: %s" %annotname
-
     if args['--chromosomes'] is None: args['--chromosomes'] = []
     else: args['--chromosomes'] = args['--chromosomes'].split(',')
 
@@ -876,7 +871,7 @@ def parse_args(args):
         except ValueError: raise ValueError("--exon_cutoff must be an integer.")
 
     options = dict((k.lstrip('-').lower(), v) for k,v in list(args.items()))
-    return bamname, annotname, options
+    return options
 
 
 

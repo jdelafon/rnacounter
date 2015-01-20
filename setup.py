@@ -15,7 +15,7 @@ ext_modules = [
 ]
 
 setup(name='rnacounter',
-    version='1.3',
+    version='1.3.1',
     description='Estimate abundances of genomic features from read densities',
     long_description=readme(),
     classifiers=[
@@ -34,6 +34,8 @@ setup(name='rnacounter',
     license='GPL-2',
     packages=['rnacounter'],
     zip_safe=False,
+    data_files=[('tests/testfiles',['tests/testfiles/gapdhKO.bam',
+         'tests/testfiles/gapdhKO.bam.bai','tests/testfiles/mm9_3genes_renamed.gtf'])],
     include_package_data=True,
     test_suite='nose.collector',
     install_requires=['numpy','scipy','docopt','nose','pysam','cython'],
