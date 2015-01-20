@@ -3,13 +3,13 @@
 #cython: cdivision=True
 """
 Usage:
-   rnacounter test
-   rnacounter join TAB [TAB2 ...]
    rnacounter  (--version | -h)
-   rnacounter  [...] BAM GTF
+   rnacounter  BAM GTF
    rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
                [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]
                BAM GTF
+   rnacounter test [-s] [--nh] [-t TYPE] [-m METHOD]
+   rnacounter join TAB [TAB2 ...]
 
 Options:
    -h, --help                       Displays usage information and exits.
@@ -303,7 +303,7 @@ cdef list partition_chrexons(list chrexons):
     partition = []
     pinvgenes = {}  # map {gene_id: partitions it is found in}
     npart = 0       # partition index
-    # First cut - where disjoint except if the same gene continues
+    # First cut (where disjoint, except if the same gene continues)
     for i,exon in enumerate(chrexons):
         if (exon.start > lastend) and (exon.gene_id not in lastgeneids):
             lastend = max(exon.end,lastend)
@@ -807,10 +807,19 @@ def rnacounter_main(bamname, annotname, options):
             chrom = exon.chrom
         if chrexons:
             chrexons.sort(key=attrgetter('start','end','name'))
-            partition = partition_chrexons(chrexons)
-            # Process chunks
-            for (a,b) in partition:
-                process_chunk(chrexons[a:b], sam, lastchrom, options)
+            if options['stranded']:
+                chrexons_plus = [x for x in chrexons if x.strand == 1]
+                chrexons_minus = [x for x in chrexons if x.strand == -1]
+                partition_plus = partition_chrexons(chrexons_plus)
+                partition_minus = partition_chrexons(chrexons_minus)
+                for (a,b) in partition_plus:
+                    process_chunk(chrexons_plus[a:b], sam, lastchrom, options)
+                for (a,b) in partition_minus:
+                    process_chunk(chrexons_minus[a:b], sam, lastchrom, options)
+            else:
+                partition = partition_chrexons(chrexons)
+                for (a,b) in partition:
+                    process_chunk(chrexons[a:b], sam, lastchrom, options)
         lastchrom = chrom
 
     options['output'].close()

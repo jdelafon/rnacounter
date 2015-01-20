@@ -1,10 +1,12 @@
 from setuptools import setup, Extension
+import sys
 
 try:
     import numpy as np
 except ImportError:
-    raise ImportError("""Numpy is required for the installation to proceed.\n
-  Please install numpy first with `sudo easy_install numpy` or `sudo pip install numpy`.\n""")
+    sys.stderr.write("""\n    Numpy is required for the installation to proceed.
+    Please install numpy first (with `sudo easy_install numpy` or `sudo pip install numpy`).\n\n""")
+    sys.exit(1)
 
 def readme():
     with open('README.rst') as f:

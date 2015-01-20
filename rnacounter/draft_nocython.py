@@ -3,13 +3,13 @@
 
 """
 Usage:
-   rnacounter test
-   rnacounter join TAB [TAB2 ...]
    rnacounter  (--version | -h)
-   rnacounter  [...] BAM GTF
+   rnacounter  BAM GTF
    rnacounter  [-n <int>] [-f <int>] [-s] [--nh] [--noheader] [--threshold <float>] [--exon_cutoff <int>]
                [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]
                BAM GTF
+   rnacounter test [-s] [--nh] [-t TYPE] [-m METHOD]
+   rnacounter join TAB [TAB2 ...]
 
 Options:
    -h, --help                       Displays usage information and exits.
@@ -41,6 +41,11 @@ from scipy.optimize import nnls
 from functools import reduce
 
 
+
+
+
+
+
 ##########################  GTF parsing  #############################
 
 
@@ -50,6 +55,7 @@ def _score(x):
 def _strand(x):
     smap = {'+':1, '1':1, '-':-1, '-1':-1, '.':0, '0':0}
     return smap[x]
+Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 
 def skip_header(filename):
     """Return the number of lines starting with `#`."""
@@ -59,7 +65,6 @@ def skip_header(filename):
             n += 1
     return n
 
-Ecounter = itertools.count(1)  # to give unique ids to undefined exons, see parse_gtf()
 def parse_gtf(line, gtf_ftype):
     """Parse one GTF line. Return None if not an 'exon'. Return False if row is empty."""
     # GTF fields = ['chr','source','name','start','end','score','strand','frame','attributes']
@@ -204,10 +209,6 @@ class Exon(GenomicObject):
         else:
             self.count += x
 
-class Intron(Exon):
-    def __init__(self, transcripts=set(), **args):
-        Exon.__init__(self, **args)
-
 class Transcript(GenomicObject):
     def __init__(self, exons=set(), **args):
         GenomicObject.__init__(self, **args)
@@ -317,7 +318,7 @@ def complement(tid,tpieces):
         k += 1
         intron_id = (-1,)+a.id
         intron_name = "%s-i%d"%(tid,k)
-        intron = Intron(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
+        intron = Exon(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
             start=a.end, end=b.start, name=intron_name, strand=a.strand, transcripts=set([tid]))
         introns.append(intron)
     return introns
@@ -724,11 +725,20 @@ def rnacounter_main(bamname, annotname, options):
             if not row: break
             chrom = exon.chrom
         if chrexons:
-            chrexons.sort(key=lambda x: (x.start,x.end,x.name))
-            partition = partition_chrexons(chrexons)
-            # Process chunks
-            for (a,b) in partition:
-                process_chunk(chrexons[a:b], sam, lastchrom, options)
+            chrexons.sort(key=attrgetter('start','end','name'))
+            if options['stranded']:
+                chrexons_plus = [x for x in chrexons if x.strand == 1]
+                chrexons_minus = [x for x in chrexons if x.strand == -1]
+                partition_plus = partition_chrexons(chrexons_plus)
+                partition_minus = partition_chrexons(chrexons_minus)
+                for (a,b) in partition_plus:
+                    process_chunk(chrexons_plus[a:b], sam, lastchrom, options)
+                for (a,b) in partition_minus:
+                    process_chunk(chrexons_minus[a:b], sam, lastchrom, options)
+            else:
+                partition = partition_chrexons(chrexons)
+                for (a,b) in partition:
+                    process_chunk(chrexons[a:b], sam, lastchrom, options)
         lastchrom = chrom
 
     options['output'].close()
