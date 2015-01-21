@@ -30,12 +30,10 @@ Minimal example::
 
 Installation:
 =============
-First ensure that you have numpy installed, or install it with::
+First ensure that you have numpy installed, then install rnacounter.
+With easy_install::
 
     sudo easy_install numpy
-
-Then install rnacounter with easy_install::
-
     sudo easy_install rnacounter
 
 Or better yet, with pip::
@@ -115,8 +113,6 @@ Nothing on other exons, which makes it a good example of badly conditioned input
 The least squares method returns counts on the following transcripts:
 ENSMUST00000117757, ENSMUST00000118875, ENSMUST00000147954
 and nothing on ENSMUST00000073605, ENSMUST00000144205, ENSMUST00000144588 .
-
-Returns a count of 3956.87 for the gene.
 
 Troubleshooting:
 ================
