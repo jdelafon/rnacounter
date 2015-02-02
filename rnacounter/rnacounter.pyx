@@ -9,7 +9,7 @@ Usage:
                [--gtf_ftype FTYPE] [--format FORMAT] [-t TYPE] [-c CHROMS] [-o OUTPUT] [-m METHOD]
                BAM GTF
    rnacounter test [-s] [--nh] [-t TYPE] [-m METHOD]
-   rnacounter join TAB [TAB2 ...]
+   rnacounter join [-o OUTPUT] TAB [TAB2 ...]
 
 Options:
    -h, --help                       Displays usage information and exits.
@@ -110,10 +110,11 @@ def parse_bed(str line,str gtf_ftype):
 ##########################  Join tables  ############################
 
 
-def join(tables):
+def join(tables, output):
     """Put 1-sample tables together into a single big table with one column per sample."""
     tabs = [open(t) for t in tables]
-    out = open("joined_counts_rnacounter.txt","wb")
+    if output is None: out = sys.stdout
+    else: out = open(output, "wb")
     lines = [t.readline().split('\t') for t in tabs]
     if any(len(L) == 0 for L in lines):
         sys.stderr.write("One of the tables is empty. Abort.")
@@ -141,7 +142,6 @@ def join(tables):
             return 1
     out.close()
     [t.close() for t in tabs]
-    sys.stderr.write("Merged files into \"joined_counts_rnacounter.txt\" .\n")
 
 
 #########################  Global classes  ##########################

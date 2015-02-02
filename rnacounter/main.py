@@ -16,7 +16,7 @@ __version__ = require("rnacounter")[0].version
 def main():
     args = docopt.docopt(rnacounter.usage_string(), version=__version__)
     if args['join']:
-        rnacounter.join([args['TAB']]+args['TAB2'])
+        rnacounter.join([args['TAB']]+args['TAB2'], args.get('--output'))
     elif args['test']:
         options = rnacounter.parse_args(args)
         bamname = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
