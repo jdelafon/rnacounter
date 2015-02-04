@@ -19,7 +19,7 @@ Options:
    -f <int>, --fraglength <int>     Average fragment length (for transcript length correction) [default: 1].
    --nh                             Divide count by NH flag for multiply mapping reads [default: False].
    --noheader                       Remove column names from the output (helps piping) [default: False].
-   --exon_cutoff <int>              Merge transcripts differing by exons of less than that many nt. Default: read length.
+   --exon_cutoff <int>              Merge transcripts differing by exons of less than that many nt [default: 0].
    --threshold <float>              Do not report counts inferior or equal to the given threshold [default: -1].
    --gtf_ftype FTYPE                Type of feature in the 3rd column of the GTF to consider [default: exon].
    --format FORMAT                  Format of the annotation file: 'gtf' or 'bed' [default: gtf].
@@ -567,15 +567,16 @@ cdef dict filter_transcripts(dict t2p,int exon_cutoff):
     cdef list texons, tlist
     cdef Exon te
     cdef tuple filtered_ids, f
-    seen = {}  # transcript structures, as tuples of exon ids
+    structs = {}  # transcript structures, as tuples of exon ids
     replace = {} # too close transcripts
     for t,texons in sorted(t2p.items(), key=itemgetter(0)):
-        filtered_ids = tuple([te.id for te in texons if te.length > exon_cutoff])
-        seen.setdefault(filtered_ids, []).append(t)
-    for f,tlist in seen.items():
+        structure = tuple([te.id for te in texons if te.length > exon_cutoff])
+        structs.setdefault(structure, []).append(t)
+    for f,tlist in structs.items():
+        tlist.sort()
         main = tlist[0]
         replace[main] = main
-        for t in tlist[1:]:
+        for t in tlist[1:len(tlist)]:
             t2p.pop(t)
             replace[t] = main
     return replace
@@ -629,7 +630,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     if (1 in types) or (3 in types) or (0 in types and methods[0]==2):
         replace = filter_transcripts(t2p, exon_cutoff)
         for p in pieces + exons:
-            p.transcripts = set(replace[t] for t in p.transcripts)
+            p.transcripts = set([replace[t] for t in p.transcripts])
         for t,main in replace.items():
             if t!=main: synonyms.setdefault(main, []).append(t)
     transcript_ids = sorted(t2p.keys())  # sort to have the same order in all outputs from same gtf
