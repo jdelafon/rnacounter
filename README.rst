@@ -49,7 +49,7 @@ Check that it works with the `test` command::
 
     rnacounter test
 
-It should display comething similar to this::
+It should display something similar to this::
 
     ID	Count	RPKM	Chrom	Start	End	Strand	GeneName	Type	Sense	Synonym
     ENSMUSG00000038271	0.0	0.0	chr6	125095258	125111800	1	Iffo1	Gene	.	.

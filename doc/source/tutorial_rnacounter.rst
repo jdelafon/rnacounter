@@ -86,7 +86,7 @@ The output is a tab-delimited text file with 11 fields:
 Options
 -------
 
-* :option:`-h`, :option:`--help` and :option:`-v`, :option:`--version`::
+* :option:`-h`, :option:`--help` and :option:`-v`, :option:`--version`:
 
   Display information about the program usage / the version currently installed.
 
@@ -270,6 +270,7 @@ Examples
 
 FAQ & Troubleshooting
 ---------------------
+
 Any bug report, usage issue or feature request not listed below can be addressed to
 julien.delafontaine@epfl.ch or webmaster.bbcf@epfl.ch .
 
@@ -278,6 +279,13 @@ julien.delafontaine@epfl.ch or webmaster.bbcf@epfl.ch .
   Most probably there is a mismatch between the BAM and the annotation files,
   usually not using the same assembly, or not referencing the same chromosome names.
 
+* I don't get the same numbers as with htseq-count:
+
+  First check if the input data is strand-specific (htseq-count has the -s=yes by default).
+  Secondly, rnacounter does not discard reads crossing exon boundaries - but adds a fraction
+  of the read to the nucleotide count.
+  In NNLS mode, though, the counts are expected to be significantly different
+  in regions where exons overlap, since it does not remove/ignore the overlaps.
 
 Reference
 ---------
