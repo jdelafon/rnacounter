@@ -811,16 +811,19 @@ def rnacounter_main(bamname, annotname, options):
             if options['stranded']:
                 chrexons_plus = [x for x in chrexons if x.strand == 1]
                 chrexons_minus = [x for x in chrexons if x.strand == -1]
-                partition_plus = partition_chrexons(chrexons_plus)
-                partition_minus = partition_chrexons(chrexons_minus)
-                for (a,b) in partition_plus:
-                    process_chunk(chrexons_plus[a:b], sam, lastchrom, options)
-                for (a,b) in partition_minus:
-                    process_chunk(chrexons_minus[a:b], sam, lastchrom, options)
+                if len(chrexons_plus) > 0:
+                    partition_plus = partition_chrexons(chrexons_plus)
+                    for (a,b) in partition_plus:
+                        process_chunk(chrexons_plus[a:b], sam, lastchrom, options)
+                if len(chrexons_minus) > 0:
+                    partition_minus = partition_chrexons(chrexons_minus)
+                    for (a,b) in partition_minus:
+                        process_chunk(chrexons_minus[a:b], sam, lastchrom, options)
             else:
-                partition = partition_chrexons(chrexons)
-                for (a,b) in partition:
-                    process_chunk(chrexons[a:b], sam, lastchrom, options)
+                if len(chrexons) > 0:
+                    partition = partition_chrexons(chrexons)
+                    for (a,b) in partition:
+                        process_chunk(chrexons[a:b], sam, lastchrom, options)
         lastchrom = chrom
 
     options['output'].close()
@@ -842,16 +845,16 @@ def parse_args(args):
     if args['--chromosomes'] is None: args['--chromosomes'] = []
     else: args['--chromosomes'] = args['--chromosomes'].split(',')
 
-    assert args['--format'].lower() in ['gtf','bed'], \
-        "FORMAT must be one of 'gtf' or 'bed'."
-    assert args['--format'].lower() != 'bed' or args['--type'] == 'genes', \
-        "BED input is not compatible with the '--type' option."
+    if args['--format'].lower() not in ['gtf','bed']:
+        errmsg("FORMAT must be one of 'gtf' or 'bed'.")
+    if (args['--format'].lower() == 'bed') and (args['--type'] != 'genes'):
+        errmsg("BED input is not compatible with the '--type' option.")
 
     # Type: one can actually give both as "-t genes,transcripts" but they
     # will be mixed in the output stream. Split the output using the last field ("Type").
     args['--type'] = [x.lower() for x in args['--type'].split(',')]
-    assert all(x in ["genes","transcripts","exons","introns"] for x in args['--type']), \
-        "TYPE must be one of 'genes', 'transcripts', 'exons' or 'introns'."
+    if not all(x in ["genes","transcripts","exons","introns"] for x in args['--type']):
+        errmsg("TYPE must be one of 'genes', 'transcripts', 'exons' or 'introns'.")
     type_map = {'genes':0, 'transcripts':1, 'exons':2, 'introns':3}  # avoid comparing strings later
     args['--type'] = [type_map[x] for x in args['--type']]
 
@@ -873,12 +876,12 @@ def parse_args(args):
             errmsg("'indirect-nnls' method can only be applied to type 'genes'.")
 
     try: args['--threshold'] = float(args['--threshold'])
-    except ValueError: raise ValueError("--threshold must be numeric.")
+    except ValueError: errmsg("--threshold must be numeric.")
     try: args['--fraglength'] = int(args['--fraglength'])
-    except ValueError: raise ValueError("--fraglength must be an integer.")
+    except ValueError: errmsg("FRAGLENGTH must be an integer.")
     if args['--exon_cutoff']:
         try: args['--exon_cutoff'] = int(args['--exon_cutoff'])
-        except ValueError: raise ValueError("--exon_cutoff must be an integer.")
+        except ValueError: errmsg("--exon_cutoff must be an integer.")
 
     options = dict((k.lstrip('-').lower(), v) for k,v in list(args.items()))
     return options
