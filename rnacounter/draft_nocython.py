@@ -813,10 +813,16 @@ if __name__ == '__main__':
     if args['join']:
         join([args['TAB']]+args['TAB2'], args.get('--output'))
     elif args['test']:
-        from pkg_resources import resource_filename
+        here = os.path.dirname(__file__)
+        there = os.path.join(here, "../testfiles")
+        if os.path.exists(there):
+            bamname = os.path.join(there, "gapdhKO.bam")
+            annotname = os.path.join(there, "mm9_3genes_renamed.gtf")
+        else:
+            from pkg_resources import resource_filename
+            bamname = os.path.abspath(resource_filename("testfiles", "gapdhKO.bam"))
+            annotname = os.path.abspath(resource_filename("testfiles", "mm9_3genes_renamed.gtf"))
         options = parse_args(args)
-        bamname = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
-        annotname = os.path.abspath(resource_filename('testfiles', 'mm9_3genes_renamed.gtf'))
         rnacounter_main(bamname,annotname, options)
     else:
         bamname = os.path.abspath(args['BAM'])
