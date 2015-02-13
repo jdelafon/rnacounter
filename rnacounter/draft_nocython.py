@@ -446,6 +446,7 @@ def estimate_expression_NNLS(feat_class, pieces, ids, exons, norm_cst, stranded,
                 rpk=frpk, rpk_anti=frpk_anti, count=fcount, count_anti=fcount_anti,
                 chrom=exs[0].chrom, start=exs[0].start, end=exs[len(exs)-1].end,
                 gene_id=exs[0].gene_id, gene_name=exs[0].gene_name, strand=exs[0].strand))
+    feats.sort(key=attrgetter('start','end'))
     return feats
 
 
@@ -471,6 +472,7 @@ def estimate_expression_raw(feat_class, pieces, ids, exons, norm_cst, stranded):
                 rpk=frpk, rpk_anti=frpk_anti, count=fcount, count_anti=fcount_anti,
                 chrom=exs[0].chrom, start=exs[0].start, end=exs[len(exs)-1].end,
                 gene_id=exs[0].gene_id, gene_name=exs[0].gene_name, strand=exs[0].strand))
+    feats.sort(key=attrgetter('start','end'))
     return feats
 
 
@@ -553,7 +555,7 @@ def process_chunk(ckexons, sam, chrom, options):
         for p in pieces + exons:
             p.transcripts = set(replace[t] for t in p.transcripts)
         for t,main in replace.iteritems():
-            if t!=main: synonyms.setdefault(main, []).append(t)
+            if t!=main: synonyms.setdefault(main, set()).add(t)
     transcript_ids = sorted(t2p.keys())  # sort to have the same order in all outputs from same gtf
 
     #--- Count reads in each piece
@@ -599,9 +601,22 @@ def process_chunk(ckexons, sam, chrom, options):
             transcripts = estimate_expression_NNLS(Transcript,pieces,transcript_ids,exons,norm_cst,stranded,weighted)
         elif method == 0:
             transcripts = estimate_expression_raw(Transcript,pieces,transcript_ids,exons,norm_cst,stranded)
-        for trans in transcripts:
+        for i,trans in enumerate(transcripts):
             trans.rpk = correct_fraglen_bias(trans.rpk, trans.length, fraglength)
-            trans.synonyms = ','.join(synonyms.get(trans.name, ['.']))
+            syns = synonyms.get(trans.name, [])
+            toadd = []
+            for synonym in syns:
+                syns2 = set(syns)
+                syns2.remove(synonym)
+                syns2.add(trans.name)
+                toadd.append(Transcript(name=synonym, length=trans.length,
+                        rpk=trans.rpk, rpk_anti=trans.rpk_anti, count=trans.count, count_anti=trans.count_anti,
+                        chrom=trans.chrom, start=trans.start, end=trans.end,
+                        gene_id=trans.gene_id, gene_name=trans.gene_name, strand=trans.strand,
+                        synonyms=','.join(syns2)))
+            toadd.sort(key=attrgetter('start','end'))
+            transcripts = transcripts[:i+1] + toadd + transcripts[i+1:]
+            trans.synonyms = ','.join(syns) if len(syns)>0 else '.'
     # Genes - 0
     if 0 in types:
         method = methods.get(0,0)
@@ -622,9 +637,9 @@ def process_chunk(ckexons, sam, chrom, options):
     if 2 in types:
         method = methods.get(2,0)
         if method == 0:
-            exons2 = pieces[:]   # !
+            exons2 = pieces[:]  # !
         elif method == 1:
-            exon_ids = [e.name for e in exons]
+            exon_ids = [p.name for p in exons]
             exons2 = estimate_expression_NNLS(Exon,pieces,exon_ids,exons,norm_cst,stranded,weighted)
     # Introns - 3
     if 3 in types and intron_pieces:
@@ -639,10 +654,10 @@ def process_chunk(ckexons, sam, chrom, options):
 
 
 def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
-    igenes = itertools.ifilter(lambda x:x.count > threshold, genes)
-    itranscripts = itertools.ifilter(lambda x:x.count > threshold, transcripts)
-    iexons = itertools.ifilter(lambda x:x.count > threshold, exons)
-    iintrons = itertools.ifilter(lambda x:x.count > threshold, introns)
+    igenes = filter(lambda x:x.count > threshold, genes)
+    itranscripts = filter(lambda x:x.count > threshold, transcripts)
+    iexons = filter(lambda x:x.count > threshold, exons)
+    iintrons = filter(lambda x:x.count > threshold, introns)
     if stranded:
         for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
