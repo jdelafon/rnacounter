@@ -18,9 +18,15 @@ def main():
     if args['join']:
         rnacounter.join([args['TAB']]+args['TAB2'], args.get('--output'))
     elif args['test']:
+        here = os.path.dirname(__file__)
+        there = os.path.join(here, "../testfiles")
+        if os.path.exists(there):
+            bamname = os.path.join(there, "gapdhKO.bam")
+            annotname = os.path.join(there, "mm9_3genes_renamed.gtf")
+        else:
+            bamname = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
+            annotname = os.path.abspath(resource_filename('testfiles', 'mm9_3genes_renamed.gtf'))
         options = rnacounter.parse_args(args)
-        bamname = os.path.abspath(resource_filename('testfiles', 'gapdhKO.bam'))
-        annotname = os.path.abspath(resource_filename('testfiles', 'mm9_3genes_renamed.gtf'))
         rnacounter.rnacounter_main(bamname,annotname, options)
     else:
         bamname = os.path.abspath(args['BAM'])

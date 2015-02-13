@@ -217,10 +217,11 @@ class GenomicObject(object):
 def intersect_exons_list(feats):
     """The intersection of a list *feats* of GenomicObjects. Pieces are unique."""
     feats = list(set(feats))
+    f = feats[0]
     if len(feats) == 1:
-        return copy.deepcopy(feats[0])
+        return f.__and__(f)
     else:
-        return reduce(lambda x,y: x&y, feats)
+        return reduce(GenomicObject.__and__, feats)
 
 def cobble(exons):
     """Split exons into non-overlapping parts."""
@@ -308,8 +309,9 @@ def complement(tid,tpieces):
         k += 1
         intron_id = (-1,)+a.id
         intron_name = "%s-i%d"%(tid,k)
-        intron = GenomicObject(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name, chrom=a.chrom,
-            start=a.end, end=b.start, name=intron_name, strand=a.strand, transcripts=set([tid]))
+        intron = GenomicObject(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name,
+            chrom=a.chrom, start=a.end, end=b.start, name=intron_name, strand=a.strand,
+            transcripts=set([tid]), ftype="intron")
         introns.append(intron)
     return introns
 
@@ -672,7 +674,7 @@ def rnacounter_main(bamname, annotname, options):
 
     # Open SAM. Get read length
     sam = pysam.Samfile(bamname, "rb")
-    if options['exon_cutoff'] is None:
+    if options['exon_cutoff'] < 0:
         options["exon_cutoff"] = int(next(sam).rlen)
     sam.close()
     sam = pysam.Samfile(bamname, "rb")
