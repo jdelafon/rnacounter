@@ -78,9 +78,11 @@ def parse_gtf(line, gtf_ftype):
     attrs = dict((x[0],x[1].strip("\"")) for x in attrs)
     exon_nr = next(Ecounter)
     exon_id = attrs.get('exon_id', 'E%d'%exon_nr)
+    start = max(int(row[3])-1,0)
+    end = max(int(row[4]),0)
     return GenomicObject(id=(exon_nr,),
         gene_id=attrs.get('gene_id',exon_id), gene_name=attrs.get('gene_name',exon_id),
-        chrom=row[0], start=max(int(row[3])-1,0), end=max(int(row[4]),0),
+        chrom=row[0], start=start, end=end, length=end-start,
         name=exon_id, strand=_strand(row[6]), ftype="exon",
         transcripts=set([attrs.get('transcript_id',exon_id)]))
 
@@ -98,8 +100,9 @@ def parse_bed(line, gtf_ftype):
         score = _score(row[4])
     else: score = 0.0
     exon_nr = next(Ecounter)
-    return GenomicObject(id=(exon_nr,), gene_id=name, gene_name=name, chrom=chrom, start=start, end=end,
-                name=name, score=score, strand=strand, ftype="exon", transcripts=set([name]))
+    return GenomicObject(id=(exon_nr,), gene_id=name, gene_name=name,
+        chrom=chrom, start=start, end=end, length=end-start,
+        name=name, score=score, strand=strand, ftype="exon", transcripts=set([name]))
 
 
 ##########################  Join tables  ############################
@@ -170,11 +173,11 @@ class GenomicObject(object):
         self.synonyms = synonyms
         self.transcripts = transcripts
         self.exons = exons
-        self.length = self.end - self.start
+        self.length = length
 
     def __and__(self,other):
         """The intersection of two GenomicObjects"""
-        return self.__class__(
+        return GenomicObject(
             id = self.id + other.id,
             gene_id = '|'.join(set([self.gene_id, other.gene_id])),
             gene_name = '|'.join(set([self.gene_name, other.gene_name])),
@@ -185,9 +188,6 @@ class GenomicObject(object):
             transcripts = self.transcripts | other.transcripts,
             ftype = "exon"
         )
-
-    def set_length(self, length):
-        self.length = length
 
     def increment(self, x, alignment, multiple, stranded):
         if multiple:
@@ -311,7 +311,7 @@ def complement(tid,tpieces):
         intron_name = "%s-i%d"%(tid,k)
         intron = GenomicObject(id=intron_id, gene_id=a.gene_id, gene_name=a.gene_name,
             chrom=a.chrom, start=a.end, end=b.start, name=intron_name, strand=a.strand,
-            transcripts=set([tid]), ftype="intron")
+            length=b.start-a.end, transcripts=set([tid]), ftype="intron")
         introns.append(intron)
     return introns
 
@@ -319,7 +319,7 @@ def complement(tid,tpieces):
 #############################  Counting  ############################
 
 
-def toRPK(count,length,norm_cst):
+def toRPK(count, length, norm_cst):
     return 1000.0 * count / (length * norm_cst)
 def fromRPK(rpk,length,norm_cst):
     return length * norm_cst * rpk / 1000.0
@@ -329,7 +329,7 @@ def correct_fraglen_bias(rpk, length, fraglen):
     return rpk * length / newlength
 
 
-def count_reads(exons,ckreads,multiple,stranded):
+def count_reads(exons, ckreads, multiple, stranded):
     """Adds (#aligned nucleotides/read length) to exon counts.
     Deals with indels, junctions etc.
     :param multiple: divide the count by the NH tag.
@@ -428,13 +428,14 @@ def estimate_expression_NNLS(ftype, pieces, ids, exons, norm_cst, stranded):
     frpk_anti = fcount_anti = 0.0
     for i,f in enumerate(ids):
         exs = sorted([e for e in exons if is_in(ftype,e,f)], key=attrgetter('start','end'))
-        flen = sum([p.length for p in pieces if is_in(ftype,p,f)])
+        inner = [p for p in pieces if is_in(ftype,p,f)]
+        flen = sum([p.length for p in cobble(inner)])
         frpk = T[i]
         fcount = fromRPK(T[i],flen,norm_cst)
         if stranded:
             frpk_anti = T_anti[i]
             fcount_anti = fromRPK(T_anti[i],flen,norm_cst)
-        feats.append(GenomicObject(name=f, length=flen, ftype=ftype,
+        feats.append(GenomicObject(name=f, ftype=ftype, length=flen,
                 rpk=frpk, rpk_anti=frpk_anti, count=fcount, count_anti=fcount_anti,
                 chrom=exs[0].chrom, start=exs[0].start, end=exs[len(exs)-1].end,
                 gene_id=exs[0].gene_id, gene_name=exs[0].gene_name, strand=exs[0].strand))
@@ -451,10 +452,10 @@ def estimate_expression_raw(ftype, pieces, ids, exons, norm_cst, stranded):
         exs = sorted([e for e in exons if is_in(ftype,e,f)], key=attrgetter('start','end'))
         inner = [p for p in pieces if (len(p.gene_id.split('|'))==1 and is_in(ftype,p,f))]
         if len(inner)==0:
-            flen = 1
+            flen = 0
             fcount = frpk = 0.0
         else:
-            flen = sum([p.length for p in inner])
+            flen = sum([p.length for p in cobble(inner)])
             fcount = sum([p.count for p in inner])
             frpk = toRPK(fcount,flen,norm_cst)
             if stranded:
@@ -468,12 +469,14 @@ def estimate_expression_raw(ftype, pieces, ids, exons, norm_cst, stranded):
     return feats
 
 
-def genes_from_transcripts(transcripts):
+def genes_from_transcripts(transcripts, pieces):
+    """Used in 'indirect-nnls' mode."""
     genes = []
-    for k,g in itertools.groupby(transcripts, key=attrgetter("gene_id")):
-        g = list(g)
+    for k,group in itertools.groupby(transcripts, key=attrgetter("gene_id")):
+        g = list(group)
         t0 = g[0]
-        glen = sum([x.length for x in cobble(g)])
+        inner = [p for p in pieces if is_in("gene",p,k)]
+        glen = sum([p.length for p in cobble(inner)])
         genes.append(GenomicObject(name=t0.gene_id, ftype="gene",
                 rpk=sum([x.rpk for x in g]), rpk_anti=sum([x.rpk_anti for x in g]),
                 count=sum([x.count for x in g]), count_anti=sum([x.count_anti for x in g]),
@@ -598,9 +601,9 @@ def process_chunk(ckexons, sam, chrom, options):
             toadd = []
             for synonym in syns:
                 if synonym != trans.name:
-                    toadd.append(GenomicObject(name=synonym, length=trans.length,
+                    toadd.append(GenomicObject(name=synonym,
                             rpk=trans.rpk, rpk_anti=trans.rpk_anti, count=trans.count, count_anti=trans.count_anti,
-                            chrom=trans.chrom, start=trans.start, end=trans.end,
+                            chrom=trans.chrom, start=trans.start, end=trans.end, length=trans.length,
                             gene_id=trans.gene_id, gene_name=trans.gene_name, strand=trans.strand,
                             synonyms=','.join(syns), ftype="transcript"))
             toadd.sort(key=attrgetter('start','end'))
@@ -615,10 +618,10 @@ def process_chunk(ckexons, sam, chrom, options):
             genes = estimate_expression_NNLS("gene",pieces,gene_ids,exons,norm_cst,stranded)
         elif method == 2:
             if 1 in types and methods.get(1) == 1:
-                genes = genes_from_transcripts(transcripts)
+                genes = genes_from_transcripts(transcripts, pieces)
             else:
                 transcripts2 = estimate_expression_NNLS("transcript",pieces,transcript_ids,exons,norm_cst,stranded)
-                genes = genes_from_transcripts(transcripts2)
+                genes = genes_from_transcripts(transcripts2, pieces)
                 transcripts2 = []
         for gene in genes:
             gene.rpk = correct_fraglen_bias(gene.rpk, gene.length, fraglength)
@@ -650,15 +653,15 @@ def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
     if stranded:
         for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.ftype,'sense',f.synonyms]]
+                                        f.strand,f.gene_name,f.length,f.ftype,'sense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
             towrite = [str(x) for x in [f.name,f.count_anti,f.rpk_anti,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.ftype,'antisense',f.synonyms]]
+                                        f.strand,f.gene_name,f.length,f.ftype,'antisense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
     else:
         for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
-                                        f.strand,f.gene_name,f.ftype,'.',f.synonyms]]
+                                        f.strand,f.gene_name,f.length,f.ftype,'.',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
 
 
@@ -684,7 +687,7 @@ def rnacounter_main(bamname, annotname, options):
     if options['output'] is None: options['output'] = sys.stdout
     else: options['output'] = open(options['output'], "wb")
     if options['noheader'] is False:
-        header = ['ID','Count','RPKM','Chrom','Start','End','Strand','GeneName','Type','Sense','Synonyms']
+        header = ['ID','Count','RPKM','Chrom','Start','End','Strand','GeneName','Length','Type','Sense','Synonyms']
         options['output'].write('\t'.join(header)+'\n')
 
     if options['format'] == 'gtf':
