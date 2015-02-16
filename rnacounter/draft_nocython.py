@@ -400,7 +400,7 @@ def is_in(ftype,x,feat_id):
             # x is an exon: x == itself or x contains the piece
             # x is a piece: p == feat_id
 
-def estimate_expression_NNLS(ftype, pieces, ids, exons, norm_cst, stranded, weighted):
+def estimate_expression_NNLS(ftype, pieces, ids, exons, norm_cst, stranded):
     #--- Build the exons-transcripts structure matrix:
     # Lines are exons, columns are transcripts,
     # so that A[i,j]!=0 means "transcript Tj contains exon Ei".
@@ -412,11 +412,11 @@ def estimate_expression_NNLS(ftype, pieces, ids, exons, norm_cst, stranded, weig
             A[i,j] = 1. if is_in(ftype,p,f) else 0.
     #--- Build the exons RPKs vector
     E = asarray([p.rpk for p in pieces])
-    if weighted:
-        w = sqrt(asarray([p.length for p in pieces]))
-        W = diag(w)
-        A = dot(W,A)
-        E = multiply(E, w)
+    # Weights
+    w = sqrt(asarray([p.length for p in pieces]))
+    W = diag(w)
+    A = dot(W,A)
+    E = multiply(E, w)
     #--- Solve for transcripts RPK
     T,rnorm = nnls(A,E)
     #-- Same for antisense if stranded protocol
@@ -520,7 +520,6 @@ def process_chunk(ckexons, sam, chrom, options):
     threshold = options['threshold']
     fraglength = options['fraglength']
     exon_cutoff = options['exon_cutoff']
-    weighted = True
 
     #--- Regroup occurrences of the same exon from a different transcript
     exons = []
@@ -547,7 +546,7 @@ def process_chunk(ckexons, sam, chrom, options):
         for p in pieces + exons:
             p.transcripts = set(replace[t] for t in p.transcripts)
         for t,main in replace.iteritems():
-            if t!=main: synonyms.setdefault(main, set()).add(t)
+            synonyms.setdefault(main, set()).add(t)
     transcript_ids = sorted(t2p.keys())  # sort to have the same order in all outputs from same gtf
 
     #--- Count reads in each piece
@@ -590,37 +589,35 @@ def process_chunk(ckexons, sam, chrom, options):
     if 1 in types:
         method = methods.get(1,1)
         if method == 1:
-            transcripts = estimate_expression_NNLS("transcript",pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+            transcripts = estimate_expression_NNLS("transcript",pieces,transcript_ids,exons,norm_cst,stranded)
         elif method == 0:
             transcripts = estimate_expression_raw("transcript",pieces,transcript_ids,exons,norm_cst,stranded)
         for i,trans in enumerate(transcripts):
             trans.rpk = correct_fraglen_bias(trans.rpk, trans.length, fraglength)
-            syns = synonyms.get(trans.name, [])
+            syns = sorted(synonyms.get(trans.name, []))
             toadd = []
             for synonym in syns:
-                syns2 = set(syns)
-                syns2.remove(synonym)
-                syns2.add(trans.name)
-                toadd.append(GenomicObject(name=synonym, length=trans.length,
-                        rpk=trans.rpk, rpk_anti=trans.rpk_anti, count=trans.count, count_anti=trans.count_anti,
-                        chrom=trans.chrom, start=trans.start, end=trans.end,
-                        gene_id=trans.gene_id, gene_name=trans.gene_name, strand=trans.strand,
-                        synonyms=','.join(syns2), ftype="transcript"))
+                if synonym != trans.name:
+                    toadd.append(GenomicObject(name=synonym, length=trans.length,
+                            rpk=trans.rpk, rpk_anti=trans.rpk_anti, count=trans.count, count_anti=trans.count_anti,
+                            chrom=trans.chrom, start=trans.start, end=trans.end,
+                            gene_id=trans.gene_id, gene_name=trans.gene_name, strand=trans.strand,
+                            synonyms=','.join(syns), ftype="transcript"))
             toadd.sort(key=attrgetter('start','end'))
             transcripts = transcripts[:i+1] + toadd + transcripts[i+1:]
-            trans.synonyms = ','.join(syns) if len(syns)>0 else '.'
+            trans.synonyms = ','.join(syns) if len(syns)>1 else '.'
     # Genes - 0
     if 0 in types:
         method = methods.get(0,0)
         if method == 0:
             genes = estimate_expression_raw("gene",pieces,gene_ids,exons,norm_cst,stranded)
         elif method == 1:
-            genes = estimate_expression_NNLS("gene",pieces,gene_ids,exons,norm_cst,stranded,weighted)
+            genes = estimate_expression_NNLS("gene",pieces,gene_ids,exons,norm_cst,stranded)
         elif method == 2:
             if 1 in types and methods.get(1) == 1:
                 genes = genes_from_transcripts(transcripts)
             else:
-                transcripts2 = estimate_expression_NNLS("transcript",pieces,transcript_ids,exons,norm_cst,stranded,weighted)
+                transcripts2 = estimate_expression_NNLS("transcript",pieces,transcript_ids,exons,norm_cst,stranded)
                 genes = genes_from_transcripts(transcripts2)
                 transcripts2 = []
         for gene in genes:
@@ -632,7 +629,7 @@ def process_chunk(ckexons, sam, chrom, options):
             exons2 = pieces[:]  # !
         elif method == 1:
             exon_ids = [p.name for p in exons]
-            exons2 = estimate_expression_NNLS("exon",pieces,exon_ids,exons,norm_cst,stranded,weighted)
+            exons2 = estimate_expression_NNLS("exon",pieces,exon_ids,exons,norm_cst,stranded)
     # Introns - 3
     if 3 in types and intron_pieces:
         method = methods.get(3,0)
@@ -640,7 +637,7 @@ def process_chunk(ckexons, sam, chrom, options):
             introns2 = intron_pieces[:]   # !
         elif method == 1:
             intron_ids = [e.name for e in introns]
-            introns2 = estimate_expression_NNLS("intron",intron_pieces,intron_ids,introns,norm_cst,stranded,weighted)
+            introns2 = estimate_expression_NNLS("intron",intron_pieces,intron_ids,introns,norm_cst,stranded)
 
     print_output(output, genes,transcripts,exons2,introns2, threshold,stranded)
 
