@@ -30,7 +30,7 @@ RPKM and annotation information such as the genomic location::
 
    rnacounter test.bam test.gtf > counts_table.txt
 
-Many options are then available, listed below.
+Many options are then available, listed in the Options section below.
 
 The special command `rnacounter test` runs the program on already included
 small sample files to check that it works correctly::
@@ -42,6 +42,9 @@ to create a single table with counts from all samples::
 
    rnacounter join tab1.txt tab2.txt ... > tab_all.txt
 
+The tables to join must have exactly the same number of lines -
+any kind of filtering can break this requirement.
+
 You can print this help page directly with::
 
    rnacounter -h
@@ -49,7 +52,9 @@ You can print this help page directly with::
 Input files format
 ------------------
 A BAM file is the result of any common read aligner (Bowtie, BWA, ...).
-BAM files specification: http://samtools.github.io/hts-specs/SAMv1.pdf
+BAM files specification:
+
+http://samtools.github.io/hts-specs/SAMv1.pdf
 
 A GTF file (sometimes also called GFF or GFF2/3) looks like this::
 
@@ -62,15 +67,18 @@ I exon_id is not present, a random one will be generated.
 If any of the others mentioned in the example are
 not present (e.g. transcript_id), they will be given the value of exon_id.
 All other annotations will be ignored.
-GTF/GFF specification: http://www.ensembl.org/info/website/upload/gff.html
+GTF/GFF specification:
+
+http://www.ensembl.org/info/website/upload/gff.html
 
 One can dowload suitable GTF files from Ensembl (under "Gene sets"):
+
 http://www.ensembl.org/info/data/ftp/index.html
 
 Output format
 -------------
 
-The output is a tab-delimited text file with 11 fields:
+The output is a tab-delimited text file with the following fields:
 
 * ID : unique feature ID, as in the gene_id/exon_id/transcript_id GTF fields.
 * Count : raw read count, without any normalization.
@@ -79,9 +87,11 @@ The output is a tab-delimited text file with 11 fields:
 * Chrom, Start, End, Strand : region localization in the genome.
 * GeneName : gene symbol (may not be unique).
 * Type : gene, exon, intron or transcript, in case they are mixed in the output (see `-t`).
-* Sense : for stranded protocols (see :option:`-s`), sense and antisense read counts are reported
-  on two different lines. If not stranded, returns '.' .
+* Sense : for strand-specific protocols (see :option:`-s`), sense and antisense read counts
+  are reported on two different lines. If not specified, returns '.' .
 * Synonym : list of synonym IDs (see :option:`--exon_cutoff`), if any, '.' otherwise.
+
+The file starts with a 1-line header listing the field names.
 
 Options
 -------
@@ -139,10 +149,11 @@ Options
   the read length constraint and lack of coverage on small regions, reducing
   the model's power.
   To address this, one can merge transcripts differing by exonic
-  regions of less than that many nucleotides. In the output,
-  all similar transcripts are reported with the same score, in succession,
-  but synonyms are listed in a supplementary column. The duplicate scores
-  are not accounted for in any calculation.
+  regions of less than that many nucleotides.
+  In the output, all similar transcripts are reported with the same score,
+  in succession, but synonyms are listed in a supplementary column.
+  Synonyms include the feature itself, in order to easily group synonym features.
+  The duplicate scores are not accounted for in any calculation.
   A zero cutoff (default) disables transcripts filtering, and is especially suitable to
   "local" alignments, or to a bigger number to reduce the transcripts variety.
   A negative value sets the cutoff to read length.
@@ -177,11 +188,14 @@ Options
 * :option:`-t`, :option:`--type`:
 
   The type of feature you want to count reads in. Can be "genes" (default),
-  "transcripts", "exons" or "introns".
+  "transcripts", "exons", "exon_frags" or "introns".
+  "exon_frags" means "disjoint exon fragments", opposed to "exons" which can overlap
+  (see the Overlaps,... section below).
   One can give multiple comma-separated values, in which case all
   the different features will be mixed in the output but can easily be split
   using the last column tag, as for instance with `... | grep 'exon'`.
-  Then if `--method` is specified it must have the same number of values as `type`,
+  Then if :option:`--method` is specified it must have the same number of values as
+  :option:`--type`,
   also as a comma-separated list, or a single one that is applied to all types.
 
 * :option:`-c`, :option:`--chromosomes`:
@@ -191,32 +205,74 @@ Options
 
 * :option:`-o`, :option:`--output`:
 
-  The output is `stdout` by default (output directly to screen), which permits
-  redirection to a file. Alternatively one can redirect the standard output to
+  The output is `stdout` by default (output directly to screen unless redirected).
+  Alternatively one can redirect the standard output to
   a file using this option. If the file name already exists, it will be overwritten.
 
 * :option:`-m`, :option:`--method`:
 
   Feature counts are inferred from the counts on (slices of) exons
-  with the chosen `--method`: "raw" (htseq-count-like),
+  with the chosen :option:`--method`: "raw" (htseq-count-like) or
   "nnls" (non-negative least squares, see [<ref>]).
   The default is "raw" to not disturb habits, but "nnls" is advised
-  especially at the transcripts level (see Example below).
-  For genes (`-t genes`), a special method "indirect-nnls" exists that calculates
-  transcripts expressions by NNLS and returns the gene count as the sum
-  of all its transcripts counts.
+  especially at the transcripts level (see the Overlaps,... section below).
+  For genes (:option:`-t genes`), a special method "indirect-nnls" exists that
+  calculates transcripts expressions by NNLS and returns the gene count as the
+  sum of all its transcripts counts.
+
+Overlaps, redundancies and choice of counting method
+----------------------------------------------------
+
+Viewed as annotated segments along the genome line, exons often overlap
+with each other, and so do the transcripts they constitute, hence the
+deconvolution problem that we solve by the NNLS method (see `--method`).
+The `-t` option allows to count in "genes", "transcripts", "exons",
+"exon_frags" or "introns".
+
+In "raw" mode (total number of reads aligned to the genomic region),
+"exons" counts will be redundant where overlaps occur, as their reads
+are counted twice. For that reason we first decompose exons in disjoint
+slices "exon_frags", so that the sum of all slices counts for a gene is the
+total number of reads aligned to that gene.
+For the same reason, in "raw" mode, "transcripts" counts will be redundant.
+
+Since the overlapping regions are usually big compared to the size of the exons,
+discarding all ambiguous reads would remove almost all the information.
+The problem does not really apply to overlaps between gene annotations,
+which are usually small. Thus in "raw" mode, intersections between genes
+are removed before counting. If the data is strand-specific (see `--stranded`),
+there is no more ambiguity and nothing is removed.
+
+Now for "exons", "transcripts" and not strand-specific "genes",
+using the "nnls" counting mode (see :option:`--method`) will remove the redundancy
+(adding some error proportional to the ambiguity, but still less inaccurate than
+redundant counts).
+Try::
+
+    rnacounter test -t transcripts
+
+compared to::
+
+    rnacounter test -t transcripts -m nnls
+
+The "nnls" method is equivalent to "raw" for disjoint intervals such as
+"introns" and "exon_frags".
+
+Counting in genes is traditionally done as via the "raw" method.
+However, to remain consistent the expression of the gene should be
+the quantity of RNA transcribed from this gene. Thus it probably makes sense
+to first calculate transcripts expressions by NNLS and sum them to obtain the
+gene count, which is implemented in the "indirect-nnls" method.
+
+In summary, one should:
+
+* count genes with either "raw" or "nnls" or "indirect-nnls", depending on one's beliefs;
+* count transcripts with "nnls";
+* count exons with "nnls", or rather consider the "exon_frags" instead;
+* and the method of choice does not matter for introns and "exon_frags".
 
 Miscellaneous notes
 -------------------
-
-* Overlapping regions:
-
-  In "raw" counting mode, regions spanned by exon from two or more genes,
-  together with the alignements inside these regions, are ignored (ambiguous),
-  unless the overlapping features are on different strands and the `--stranded`
-  option is used.
-  The "nnls" mode tries to resolve the ambiguity in the same way
-  it does for multiple isoforms.
 
 * Multiple alignments:
 
@@ -225,17 +281,18 @@ Miscellaneous notes
   or the BAM file can be filtered afterwards. On the contrary if you want to keep
   multiple mapping but correct for it, you can use the `--nh` option.
 
-* Exons and introns:
+* Exons and introns annotation:
 
-  Because annotated exons often overlap a lot, in "raw" mode, "exon" counts are actually
-  that of their disjoint slices, and their name in the output table is formatted as
-  "exon1|exon2" if a slice is spanned by exon1 and exon2. In "nnls" mode, exon counts
-  are inferred from disjoint slices as for genes.
+  If no exon_id is present in the GTF, a random, unique one is assigned.
+  "exon_frags" names in the output table are formatted as
+  "exon1|exon2" if the fragment is spanned by exon1 and exon2.
 
-  Intronic regions also annotated as exons in some alternative transcripts are
-  ignored whatever the chosen method is. Because they don't have official IDs,
-  introns slices are given names following this pattern:
-  "<n>I-<gene_id>", if it is the n-th intron of that gene.
+  Intronic regions that are also annotated as exons in some alternative transcripts are
+  ignored whatever the chosen method is - i.e. only regions that are intronic in
+  all alternative transcripts are reported.
+  Because they don't have official IDs, introns slices are given names following
+  this pattern: "<n>I-<gene_id>", if it is the n-th intron of that gene.
+  Report to their coordinates to identify them more precisely.
 
 * Non-integer counts:
 
