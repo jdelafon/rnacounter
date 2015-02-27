@@ -24,7 +24,7 @@ Options:
    --gtf_ftype FTYPE                Type of feature in the 3rd column of the GTF to consider as exons [default: exon].
    --format FORMAT                  Format of the annotation file: 'gtf' or 'bed' [default: gtf].
    -t TYPE, --type TYPE             Type of genomic features to count reads in:
-                                    'genes', 'transcripts', 'exons' or 'introns' [default: genes].
+                                    'genes', 'transcripts', 'exons', 'introns' or 'exon_frags' [default: genes].
    -c CHROMS, --chromosomes CHROMS  Selection of chromosome names (comma-separated list).
    -o OUTPUT, --output OUTPUT       Output file to redirect stdout (optional).
    -m METHOD, --method METHOD       Counting method: 'nnls', 'raw' or 'indirect-nnls' [default: raw].
@@ -429,10 +429,10 @@ cdef inline bint is_in(str ftype,GenomicObject x,str feat_id):
         return feat_id in x.transcripts
     elif ftype == "gene":
         return feat_id in x.gene_id.split('|')
-    else:
+    elif ftype == "exon":
+        return feat_id in x.name.split('|')
+    else:  # piece
         return x.name in feat_id.split('|') or x.name == feat_id
-            # x is an exon: x == itself or x contains the piece
-            # x is a piece: p == feat_id
 
 
 cdef list estimate_expression_NNLS(str ftype,list pieces,list ids,list exons,double norm_cst,bint stranded):
@@ -579,7 +579,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     cdef GenomicObject exon0, gr, p, e, gene, trans
     cdef list exons, exons2, introns, introns2, genes, transcripts
     cdef list exon_names, transcript_ids, gene_ids
-    cdef list pieces, tpieces, types, syns
+    cdef list pieces, pieces2, tpieces, types, syns
     cdef dict t2p, methods, synonyms
     cdef str t, tid, synonym
     cdef bint stranded
@@ -657,7 +657,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     #--- Infer gene/transcript counts
     for p in pieces:
         p.name = simplify(p.name)  # remove duplicates in names
-    genes=[]; transcripts=[]; exons2=[]; introns2=[]
+    genes=[]; transcripts=[]; exons2=[]; introns2=[]; pieces2=[]
     # Transcripts - 1
     if 1 in types:
         method = methods.get(1,1)
@@ -699,10 +699,10 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     # Exons - 2
     if 2 in types:
         method = methods.get(2,0)
+        exon_ids = [p.name for p in exons]
         if method == 0:
-            exons2 = pieces[:]  # !
+            exons2 = estimate_expression_raw("exon",pieces,exon_ids,exons,norm_cst,stranded)
         elif method == 1:
-            exon_ids = [p.name for p in exons]
             exons2 = estimate_expression_NNLS("exon",pieces,exon_ids,exons,norm_cst,stranded)
     # Introns - 3
     if 3 in types and intron_pieces:
@@ -712,17 +712,23 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
         elif method == 1:
             intron_ids = [p.name for p in introns]
             introns2 = estimate_expression_NNLS("intron",intron_pieces,intron_ids,introns,norm_cst,stranded)
+    # Pieces - 4
+    if 4 in types:
+        pieces2 = pieces[:]
+        for p in pieces2:
+            p.ftype = "exon_frag"
 
-    print_output(output, genes,transcripts,exons2,introns2, threshold,stranded)
+    write_output(output, genes,transcripts,exons2,introns2,pieces2, threshold,stranded)
 
 
-def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
+def write_output(output, genes,transcripts,exons,introns,pieces, threshold,stranded):
     igenes = filter(lambda x:x.count > threshold, genes)
     itranscripts = filter(lambda x:x.count > threshold, transcripts)
     iexons = filter(lambda x:x.count > threshold, exons)
     iintrons = filter(lambda x:x.count > threshold, introns)
+    ipieces = filter(lambda x:x.count > threshold, pieces)
     if stranded:
-        for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
+        for f in itertools.chain(igenes,itranscripts,iexons,iintrons,ipieces):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
                                         f.strand,f.gene_name,f.length,f.ftype,'sense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
@@ -730,7 +736,7 @@ def print_output(output, genes,transcripts,exons,introns, threshold,stranded):
                                         f.strand,f.gene_name,f.length,f.ftype,'antisense',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
     else:
-        for f in itertools.chain(igenes,itranscripts,iexons,iintrons):
+        for f in itertools.chain(igenes,itranscripts,iexons,iintrons,ipieces):
             towrite = [str(x) for x in [f.name,f.count,f.rpk,f.chrom,f.start,f.end,
                                         f.strand,f.gene_name,f.length,f.ftype,'.',f.synonyms]]
             output.write('\t'.join(towrite)+'\n')
@@ -852,9 +858,9 @@ def parse_args(args):
     # Type: one can actually give both as "-t genes,transcripts" but they
     # will be mixed in the output stream. Split the output using the last field ("Type").
     args['--type'] = [x.lower() for x in args['--type'].split(',')]
-    if not all(x in ["genes","transcripts","exons","introns"] for x in args['--type']):
-        errmsg("TYPE must be one of 'genes', 'transcripts', 'exons' or 'introns'.")
-    type_map = {'genes':0, 'transcripts':1, 'exons':2, 'introns':3}  # avoid comparing strings later
+    if not all(x in ["genes","transcripts","exons","introns","exon_frags"] for x in args['--type']):
+        errmsg("TYPE must be one of 'genes', 'transcripts', 'exons', 'introns' or 'exon_frags'.")
+    type_map = {'genes':0, 'transcripts':1, 'exons':2, 'introns':3, 'exon_frags':4}
     args['--type'] = [type_map[x] for x in args['--type']]
 
     # Same for methods. If given as a list, the length must be that of `--type`,
