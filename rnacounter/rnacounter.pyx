@@ -429,8 +429,6 @@ cdef inline bint is_in(str ftype,GenomicObject x,str feat_id):
         return feat_id in x.transcripts
     elif ftype == "gene":
         return feat_id in x.gene_id.split('|')
-    elif ftype == "exon":
-        return feat_id in x.name.split('|')
     else:
         return feat_id in x.name.split('|')
 
