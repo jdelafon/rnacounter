@@ -431,8 +431,8 @@ cdef inline bint is_in(str ftype,GenomicObject x,str feat_id):
         return feat_id in x.gene_id.split('|')
     elif ftype == "exon":
         return feat_id in x.name.split('|')
-    else:  # piece
-        return x.name in feat_id.split('|') or x.name == feat_id
+    else:
+        return feat_id in x.name.split('|')
 
 
 cdef list estimate_expression_NNLS(str ftype,list pieces,list ids,list exons,double norm_cst,bint stranded):
@@ -578,7 +578,7 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
     cdef int method, lastend, fraglength, exon_cutoff, i
     cdef GenomicObject exon0, gr, p, e, gene, trans
     cdef list exons, exons2, introns, introns2, genes, transcripts
-    cdef list exon_names, transcript_ids, gene_ids
+    cdef list exon_names, transcript_ids, gene_ids, intron_ids, exon_ids
     cdef list pieces, pieces2, tpieces, types, syns
     cdef dict t2p, methods, synonyms
     cdef str t, tid, synonym
@@ -644,7 +644,6 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
                 ckreads = sam.fetch(chrom, intron_pieces[0].start, lastend)
                 count_reads(intron_pieces,ckreads,options['nh'],stranded)
         for i,ip in enumerate(intron_pieces):
-            ip.name = "%dI_%s" % (i+1, simplify(ip.gene_name))
             ip.ftype = "intron"
 
     #--- Calculate RPK
@@ -706,12 +705,9 @@ def process_chunk(list ckexons,object sam,str chrom,dict options):
             exons2 = estimate_expression_NNLS("exon",pieces,exon_ids,exons,norm_cst,stranded)
     # Introns - 3
     if 3 in types and intron_pieces:
-        method = methods.get(3,0)
-        if method == 0:
-            introns2 = intron_pieces[:]   # !
-        elif method == 1:
-            intron_ids = [p.name for p in introns]
-            introns2 = estimate_expression_NNLS("intron",intron_pieces,intron_ids,introns,norm_cst,stranded)
+        introns2 = intron_pieces[:]   # !
+        for i,ip in enumerate(introns2):
+            ip.name = "%dI_%s" % (i+1, simplify(ip.gene_name))
     # Pieces - 4
     if 4 in types:
         pieces2 = pieces[:]
@@ -876,8 +872,8 @@ def parse_args(args):
     method_map = {'raw':0, 'nnls':1, "indirect-nnls":2}  # avoid comparing strings later
     args['--method'] = [method_map[x] for x in args['--method']]
     args['--method'] = dict(list(zip(args['--type'],args['--method'])))
-    for k,v in args['--method'].items():
-        if v == 2 and k != 0:
+    for t,m in args['--method'].items():
+        if m == 2 and t != 0:
             errmsg("'indirect-nnls' method can only be applied to type 'genes'.")
 
     try: args['--threshold'] = float(args['--threshold'])
