@@ -526,6 +526,7 @@ cdef list genes_from_transcripts(list transcripts,list pieces):
     cdef str k
     cdef int glen
     genes = []
+    transcripts.sort(key=attrgetter("gene_id","start","end"))
     for k,group in itertools.groupby(transcripts, key=attrgetter("gene_id")):
         g = list(group)
         t0 = g[0]
@@ -536,6 +537,7 @@ cdef list genes_from_transcripts(list transcripts,list pieces):
                 count=sum([x.count for x in g]), count_anti=sum([x.count_anti for x in g]),
                 chrom=t0.chrom, start=t0.start, end=g[len(g)-1].end, length=glen,
                 gene_id=t0.gene_id, gene_name=t0.gene_name, strand=t0.strand))
+    genes.sort(key=attrgetter('start','end'))
     return genes
 
 
